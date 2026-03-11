@@ -1,0 +1,175 @@
+PROJECT OVERVIEW
+
+Create the full source code structure for a Unity 2D mobile game inspired by Doodle Jump but with a special AI system that learns from the player's gameplay and allows the player to compete against their own trained AI clone.
+
+IMPORTANT LANGUAGE RULE
+
+All gameplay logic must be written in C# for Unity.
+
+Do NOT use Python, JavaScript, Rust, or any other language.
+
+All scripts must be compatible with the Unity game engine.
+
+PROJECT STRUCTURE
+
+Generate a Unity-style project folder structure with C# scripts.
+
+Assets/
+Scripts/
+Scripts/Player
+Scripts/Platforms
+Scripts/AI
+Scripts/Game
+Scripts/UI
+
+Create the following main scripts:
+
+PlayerController.cs
+PlatformSpawner.cs
+Platform.cs
+GameManager.cs
+CameraFollow.cs
+AIRecorder.cs
+AITrainer.cs
+AIPlayerController.cs
+GameModeManager.cs
+UIManager.cs
+
+GAMEPLAY DESCRIPTION
+
+The game is a vertical jumping platform game similar to Doodle Jump.
+
+Player Mechanics:
+
+• Player automatically jumps when landing on platforms
+• Player moves left and right using touch or tilt input
+• Gravity affects the player
+• Falling below the screen ends the run
+
+Camera:
+
+• Camera follows the player upward continuously.
+
+PLATFORM TYPES
+
+Implement multiple platform behaviors:
+
+Static Platform
+Moving Platform
+Breakable Platform
+Temporary Platform
+
+Platforms spawn procedurally as the player climbs higher.
+
+Difficulty gradually increases.
+
+PLAYER DATA RECORDING SYSTEM
+
+Create an AIRecorder system that records the player's behavior during gameplay.
+
+Record the following data every short interval:
+
+playerPositionX
+playerPositionY
+horizontalVelocity
+timeBetweenJumps
+platformTypeLanded
+reactionTimeToPlatformMovement
+
+Store these in a structured list.
+
+Example structure:
+
+class PlayerActionData
+{
+float time;
+float playerX;
+float playerY;
+float velocityX;
+float jumpDelay;
+string platformType;
+}
+
+Limit stored data to the most recent 2000 entries.
+
+AI LEARNING SYSTEM
+
+Do NOT implement heavy neural networks.
+
+Instead implement a lightweight behavior cloning system.
+
+Create an AITrainer script that analyzes recorded player data and calculates:
+
+averageJumpDelay
+averageMoveSpeed
+leftRightMovementBias
+averageReactionTime
+
+Store these values inside an AIProfile object.
+
+Example:
+
+class AIProfile
+{
+float avgJumpDelay;
+float avgMoveSpeed;
+float directionBias;
+float reactionTime;
+}
+
+AI PLAYER SYSTEM
+
+Create a second character controlled by AIPlayerController.
+
+The AI should:
+
+• Move left or right similar to the player's patterns
+• Jump using learned timing
+• Occasionally introduce small randomness to simulate human behavior
+• React to moving platforms using the learned reaction time
+
+GAME MODES
+
+Mode 1: Normal Play
+
+Standard endless vertical climbing.
+
+Mode 2: Play Against Your AI
+
+Spawn two characters:
+
+Player
+AI Clone
+
+Both climb the same generated level.
+
+Display both scores.
+
+The winner is whoever climbs higher.
+
+UI FEATURES
+
+Implement UI systems for:
+
+Start Menu
+Mode Selection
+Score Display
+Restart Button
+
+GRAPHICS STYLE
+
+Use simple placeholder sprites for now.
+
+The visual style should resemble a hand-drawn doodle aesthetic similar to Doodle Jump.
+
+PERFORMANCE REQUIREMENTS
+
+The AI system must be lightweight and optimized for mobile devices.
+
+Avoid heavy machine learning frameworks.
+
+All AI logic should run instantly using simple statistics.
+
+FINAL GOAL
+
+The project should be a Unity-ready codebase written entirely in C# that can be opened later in the Unity editor and compiled into an Android APK.

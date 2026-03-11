@@ -1,0 +1,172 @@
+Yes — the AI **should know what’s happening in the game world**, but **not by looking at the screen like a human**.
+Instead, the **game should directly give the AI the internal game data**. This is **much easier and faster**.
+
+This approach is used in most game AI systems.
+
+---
+
+# Two ways AI can understand the game
+
+## 1️⃣ Screen-vision AI (NOT recommended)
+
+The AI looks at pixels on the screen and tries to understand them.
+
+Example:
+
+* analyze image
+* detect platforms
+* detect player
+* decide jump
+
+This is similar to research systems used for games like
+Atari 2600 games.
+
+Problems:
+
+❌ extremely heavy computation
+❌ requires neural networks
+❌ slow on mobile
+❌ hard for an AI agent to build
+
+So **don’t do this**.
+
+---
+
+# 2️⃣ Internal game-state AI (BEST)
+
+Instead of reading pixels, the game gives the AI **exact information about the world**.
+
+Example data:
+
+```
+playerX
+playerY
+velocityX
+velocityY
+nextPlatformX
+nextPlatformY
+platformType
+distanceToPlatform
+```
+
+Now the AI can easily decide:
+
+```
+if distanceToPlatform < jumpThreshold
+    jump
+```
+
+This is **much simpler and faster**.
+
+---
+
+# How your AI clone should work
+
+When the player plays, record **three types of data**:
+
+### 1️⃣ Player behavior
+
+```
+jump timing
+direction changes
+movement speed
+reaction time
+```
+
+### 2️⃣ Environment state
+
+```
+platform position
+platform type
+platform speed
+distance to platform
+```
+
+### 3️⃣ Outcome
+
+```
+successful landing
+missed jump
+fall
+```
+
+This helps the AI **understand the situation**, not just copy actions.
+
+---
+
+# Example AI decision system
+
+The AI receives a state like:
+
+```
+playerX = 4.2
+playerY = 12.1
+velocityY = -3
+nextPlatformX = 5.0
+nextPlatformY = 14
+platformType = moving
+```
+
+Then it decides:
+
+```
+move right
+prepare jump
+jump after 0.4 seconds
+```
+
+This makes the AI **feel smart without heavy ML**.
+
+---
+
+# Why this works best for your project
+
+You are using:
+
+* Unity
+* C# scripts
+* AI agents generating code
+
+Game-state AI:
+
+✔ easy to code
+✔ fast on mobile
+✔ easy for AI agents to generate
+✔ realistic gameplay behavior
+
+---
+
+# One extra trick (VERY important)
+
+Instead of only giving the AI the **next platform**, give it the **next 3 platforms**.
+
+Example:
+
+```
+platform1
+platform2
+platform3
+```
+
+This allows the AI to **plan ahead** slightly, which makes it feel more human.
+
+---
+
+# Final recommendation
+
+Your AI should use **three information sources**:
+
+1️⃣ Player behavior history
+2️⃣ Current game state (platforms, position, velocity)
+3️⃣ Learned timing patterns
+
+Together this creates a **very believable AI clone**.
+
+---
+
+✅ If you want, I can also show you **one extremely important system used in games like**
+Celeste and
+Super Meat Boy
+
+that makes jumping physics feel **addictively satisfying**.
+It’s actually the **most important part of games like** Doodle Jump.
