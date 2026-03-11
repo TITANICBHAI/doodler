@@ -6,12 +6,12 @@ namespace DoodleClimb.Player
     /// Controls the human player character.
     ///
     /// Responsibilities:
-    ///   • Touch drag / tilt input → horizontal movement
-    ///   • Auto-jump the instant the player lands on a platform
-    ///   • Fall gravity multiplier for a satisfying arc
-    ///   • Screen wrapping (exit right → enter left, and vice-versa)
-    ///   • Notifies GameManager of jumps and landings so the AIRecorder
-    ///     can capture both behaviour and environment state together.
+    ///   - Touch drag / tilt input → horizontal movement
+    ///   - Auto-jump the instant the player lands on a platform
+    ///   - Fall gravity multiplier for a satisfying arc
+    ///   - Screen wrapping (exit right → enter left, and vice-versa)
+    ///   - Notifies GameManager of jumps and landings so AIRecorder
+    ///     can capture both behaviour and environment state together
     /// </summary>
     [RequireComponent(typeof(Rigidbody2D))]
     public class PlayerController : MonoBehaviour
@@ -43,8 +43,7 @@ namespace DoodleClimb.Player
 
         // Tracked for AI recording
         private float  _lastLandTime;
-        private string _lastPlatformType          = "none";
-        private float  _lastLandedPlatformCentreX = 0f;
+        private string _lastPlatformType = "none";
 
         // Moving platform reaction tracking
         private bool  _encounteredMovingPlatform;
@@ -63,11 +62,11 @@ namespace DoodleClimb.Player
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
         {
-            _rb = GetComponent<Rigidbody2D>();
-            _rb.gravityScale  = 1f;
-            _rb.constraints   = RigidbodyConstraints2D.FreezeRotation;
-            _recorder         = FindObjectOfType<AI.AIRecorder>();
-            _gameManager      = FindObjectOfType<Game.GameManager>();
+            _rb          = GetComponent<Rigidbody2D>();
+            _rb.gravityScale = 1f;
+            _rb.constraints  = RigidbodyConstraints2D.FreezeRotation;
+            _recorder    = FindObjectOfType<AI.AIRecorder>();
+            _gameManager = FindObjectOfType<Game.GameManager>();
         }
 
         private void Start()
@@ -88,7 +87,8 @@ namespace DoodleClimb.Player
         private void FixedUpdate()
         {
             if (!_isAlive) return;
-            _rb.linearVelocity = new Vector2(_horizontalInput * moveSpeed, _rb.linearVelocity.y);
+            // Preserve vertical velocity from physics; only override horizontal
+            _rb.velocity = new Vector2(_horizontalInput * moveSpeed, _rb.velocity.y);
         }
 
         // ── Input ─────────────────────────────────────────────────────────────────
@@ -108,6 +108,7 @@ namespace DoodleClimb.Player
                 }
                 else
                 {
+                    // Keyboard fallback for editor testing
                     _horizontalInput = Input.GetAxisRaw("Horizontal");
                 }
             }
@@ -116,9 +117,9 @@ namespace DoodleClimb.Player
         // ── Physics helpers ───────────────────────────────────────────────────────
         private void ApplyFallGravity()
         {
-            if (_rb.linearVelocity.y < 0f)
+            if (_rb.velocity.y < 0f)
             {
-                _rb.linearVelocity += Vector2.up
+                _rb.velocity += Vector2.up
                     * Physics2D.gravity.y
                     * (fallGravityMultiplier - 1f)
                     * Time.deltaTime;
@@ -138,13 +139,14 @@ namespace DoodleClimb.Player
         private void Jump()
         {
             float jumpDelay = Time.time - _lastLandTime;
-            _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, jumpForce);
+            // Preserve horizontal velocity; apply jump force vertically
+            _rb.velocity = new Vector2(_rb.velocity.x, jumpForce);
 
             // Notify GameManager so it can pass platform context to AIRecorder
             _gameManager?.NotifyPlayerJumped(
                 transform.position.x,
                 transform.position.y,
-                _rb.linearVelocity.x,
+                _rb.velocity.x,
                 jumpDelay,
                 _lastPlatformType
             );
@@ -153,11 +155,10 @@ namespace DoodleClimb.Player
         // ── Landing callback (called by Platform.cs) ─────────────────────────────
         public void OnLanded(string platformType, bool isMovingPlatform, float platformCentreX)
         {
-            _lastLandTime              = Time.time;
-            _lastPlatformType          = platformType;
-            _lastLandedPlatformCentreX = platformCentreX;
+            _lastLandTime     = Time.time;
+            _lastPlatformType = platformType;
 
-            // Reaction time measurement for moving platforms
+            // Measure reaction time for moving platforms
             if (isMovingPlatform && _encounteredMovingPlatform)
             {
                 float reactionTime = Time.time - _movingPlatformEncounteredTime;
@@ -165,20 +166,19 @@ namespace DoodleClimb.Player
                 _recorder?.RecordReactionTime(reactionTime);
             }
 
-            // Notify GameManager of the landing so outcome can be recorded
-            _gameManager?.NotifyPlayerLanded(
-                transform.position.x, platformCentreX);
+            // Notify GameManager so the outcome can be written into the recorder
+            _gameManager?.NotifyPlayerLanded(transform.position.x, platformCentreX);
 
             OnLandedOnPlatform?.Invoke(platformType);
-            Jump(); // Auto-jump on landing
+            Jump(); // auto-jump on landing
         }
 
         public void NotifyMovingPlatformNearby()
         {
             if (!_encounteredMovingPlatform)
             {
-                _encounteredMovingPlatform          = true;
-                _movingPlatformEncounteredTime      = Time.time;
+                _encounteredMovingPlatform     = true;
+                _movingPlatformEncounteredTime = Time.time;
             }
         }
 
@@ -186,9 +186,9 @@ namespace DoodleClimb.Player
         public void Die()
         {
             if (!_isAlive) return;
-            _isAlive           = false;
-            _rb.linearVelocity = Vector2.zero;
-            _rb.bodyType       = RigidbodyType2D.Kinematic;
+            _isAlive       = false;
+            _rb.velocity   = Vector2.zero;
+            _rb.bodyType   = RigidbodyType2D.Kinematic;
             OnDied?.Invoke();
         }
 
@@ -196,26 +196,26 @@ namespace DoodleClimb.Player
         {
             transform.position = spawnPosition;
             _rb.bodyType       = RigidbodyType2D.Dynamic;
-            _rb.linearVelocity = Vector2.zero;
+            _rb.velocity       = Vector2.zero;
             _isAlive           = true;
             _lastLandTime      = Time.time;
         }
 
-        // ── Per-frame frame recording ─────────────────────────────────────────────
+        // ── Per-frame recording ───────────────────────────────────────────────────
         private void RecordFrame()
         {
             _recorder?.RecordFrame(
                 transform.position.x,
                 transform.position.y,
-                _rb.linearVelocity.x,
-                _rb.linearVelocity.y
+                _rb.velocity.x,
+                _rb.velocity.y
             );
         }
 
         // ── Public getters ────────────────────────────────────────────────────────
-        public float HorizontalInput => _horizontalInput;
-        public bool  IsAlive         => _isAlive;
-        public Rigidbody2D Rigidbody => _rb;
-        public float CurrentHeight   => transform.position.y;
+        public float       HorizontalInput => _horizontalInput;
+        public bool        IsAlive         => _isAlive;
+        public Rigidbody2D Rigidbody       => _rb;
+        public float       CurrentHeight   => transform.position.y;
     }
 }

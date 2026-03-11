@@ -7,11 +7,11 @@ namespace DoodleClimb.AI
     /// <summary>
     /// Controls the AI clone character using a hybrid of two systems:
     ///
-    ///   System A — Ghost Replay (if a best-run exists):
+    ///   System A - Ghost Replay (if a best-run exists):
     ///     Plays back the exact positions and jumps from the player's best run.
     ///     Feels naturally human because it IS the player.
     ///
-    ///   System B — Behaviour AI (statistical profile):
+    ///   System B - Behaviour AI (statistical profile):
     ///     Looks at the next 3 platforms, moves toward them, jumps with learned
     ///     timing, and adds small random noise to feel alive.
     ///
@@ -41,26 +41,25 @@ namespace DoodleClimb.AI
         public float fallGravityMultiplier = 2.5f;
 
         // ── References ────────────────────────────────────────────────────────────
-        private AIProfile _profile;
-        private AIRecorder _recorder;
-        private Platforms.PlatformSpawner _spawner;
-        private Rigidbody2D _rb;
+        private AIProfile                    _profile;
+        private AIRecorder                   _recorder;
+        private Platforms.PlatformSpawner    _spawner;
+        private Rigidbody2D                  _rb;
 
         // ── Behaviour-AI state ────────────────────────────────────────────────────
         private float _targetX;
         private float _lastLandTime;
-        private float _jumpDelayTimer;
-        private bool _wantsToJump;
-        private bool _isAlive;
+        private bool  _wantsToJump;
+        private bool  _isAlive;
 
         // ── Ghost-replay state ────────────────────────────────────────────────────
         private List<GhostFrame> _ghostFrames;
-        private int _ghostIndex = 0;
-        private float _replayStartTime;
-        private bool _ghostActive = false;
+        private int              _ghostIndex      = 0;
+        private float            _replayStartTime;
+        private bool             _ghostActive     = false;
 
         // ── Moving platform detection ─────────────────────────────────────────────
-        private bool _movingPlatformNearby;
+        private bool  _movingPlatformNearby;
         private float _movingPlatformDetectedTime;
 
         // ── Events ────────────────────────────────────────────────────────────────
@@ -69,10 +68,10 @@ namespace DoodleClimb.AI
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
         {
-            _rb = GetComponent<Rigidbody2D>();
+            _rb          = GetComponent<Rigidbody2D>();
             _rb.constraints = RigidbodyConstraints2D.FreezeRotation;
-            _recorder = FindObjectOfType<AIRecorder>();
-            _spawner = FindObjectOfType<Platforms.PlatformSpawner>();
+            _recorder    = FindObjectOfType<AIRecorder>();
+            _spawner     = FindObjectOfType<Platforms.PlatformSpawner>();
         }
 
         private void Update()
@@ -90,32 +89,32 @@ namespace DoodleClimb.AI
         {
             if (!_isAlive) return;
 
+            // Only apply behaviour movement when not ghost-driven
             if (!_ghostActive || aiMode == AIMode.BehaviourProfile)
                 ApplyBehaviourMovement();
 
             if (_wantsToJump)
             {
                 _wantsToJump = false;
-                _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, jumpForce);
+                _rb.velocity = new Vector2(_rb.velocity.x, jumpForce);
             }
         }
 
         // ── Initialisation ────────────────────────────────────────────────────────
         public void Initialise(AIProfile profile, bool useGhost)
         {
-            _profile = profile;
-            _isAlive = true;
+            _profile      = profile;
+            _isAlive      = true;
             _lastLandTime = Time.time;
-            _jumpDelayTimer = 0f;
+            _wantsToJump  = false;
 
             if (useGhost && _recorder != null && _recorder.HasBestRun)
             {
-                _ghostFrames = _recorder.GetBestRunFrames();
-                _ghostIndex = 0;
+                _ghostFrames     = _recorder.GetBestRunFrames();
+                _ghostIndex      = 0;
                 _replayStartTime = Time.time;
-                _ghostActive = true;
-                Debug.Log($"[AIPlayerController] Ghost replay active. " +
-                          $"Frames: {_ghostFrames.Count}");
+                _ghostActive     = true;
+                Debug.Log($"[AIPlayerController] Ghost replay active. Frames: {_ghostFrames.Count}");
             }
             else
             {
@@ -129,14 +128,14 @@ namespace DoodleClimb.AI
         {
             if (_ghostFrames == null || _ghostIndex >= _ghostFrames.Count)
             {
-                // Ghost finished — fall back to behaviour AI for the rest of the run
+                // Ghost run ended — fall back to behaviour AI for the rest of the run
                 _ghostActive = false;
                 return;
             }
 
             float replayTime = Time.time - _replayStartTime;
 
-            // Advance ghost index to match current replay time
+            // Advance ghost index to keep up with elapsed replay time
             while (_ghostIndex < _ghostFrames.Count - 1 &&
                    _ghostFrames[_ghostIndex + 1].time <= replayTime)
             {
@@ -145,30 +144,31 @@ namespace DoodleClimb.AI
 
             GhostFrame current = _ghostFrames[_ghostIndex];
 
-            // Interpolate position towards ghost position (smooth tracking)
-            Vector3 targetPos = new Vector3(current.x, current.y, 0f);
-
-            // In Hybrid mode, blend ghost position with physics
             if (aiMode == AIMode.Hybrid)
             {
-                _rb.linearVelocity = new Vector2(
+                // Hybrid: drive velocity toward ghost x-position while keeping
+                // physics-based y-velocity (so jumps still feel physical)
+                _rb.velocity = new Vector2(
                     (current.x - transform.position.x) / Time.fixedDeltaTime,
-                    _rb.linearVelocity.y
+                    _rb.velocity.y
                 );
             }
             else
             {
-                // Pure replay: move directly
+                // Pure replay: directly lerp to exact ghost position
                 transform.position = Vector3.Lerp(
-                    transform.position, targetPos, 20f * Time.deltaTime);
+                    transform.position,
+                    new Vector3(current.x, current.y, 0f),
+                    20f * Time.deltaTime
+                );
             }
 
-            // Replay jump events
+            // Fire jump at the same moment it occurred in the recorded run
             if (current.jumpEvent &&
                 _ghostIndex > 0 &&
                 !_ghostFrames[_ghostIndex - 1].jumpEvent)
             {
-                _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, jumpForce);
+                _rb.velocity = new Vector2(_rb.velocity.x, jumpForce);
             }
         }
 
@@ -177,37 +177,37 @@ namespace DoodleClimb.AI
         {
             if (_profile == null || _spawner == null) return;
 
-            // Get next 3 platforms above the AI
-            List<Platforms.Platform> upcomingPlatforms =
+            List<Platforms.Platform> upcoming =
                 _spawner.GetPlatformsAbove(transform.position.y, 3);
 
-            if (upcomingPlatforms.Count == 0) return;
+            if (upcoming.Count == 0) return;
 
-            Platforms.Platform targetPlatform = upcomingPlatforms[0];
+            Platforms.Platform target = upcoming[0];
 
-            // React to moving platforms with learned reaction time
-            if (targetPlatform.Type == Platforms.Platform.PlatformType.Moving)
+            if (target.Type == Platforms.Platform.PlatformType.Moving)
             {
                 if (!_movingPlatformNearby)
                 {
-                    _movingPlatformNearby = true;
+                    _movingPlatformNearby       = true;
                     _movingPlatformDetectedTime = Time.time;
                 }
 
                 float reactionTime = _profile.reactionTime
                     + Random.Range(-noiseAmount * 0.2f, noiseAmount * 0.2f);
 
+                // Only correct for moving platform after the learned reaction delay
                 if (Time.time - _movingPlatformDetectedTime > reactionTime)
-                    _targetX = PredictMovingPlatformX(targetPlatform);
+                    _targetX = PredictMovingPlatformX(target);
             }
             else
             {
                 _movingPlatformNearby = false;
-                _targetX = targetPlatform.transform.position.x
-                    + Random.Range(-noiseAmount, noiseAmount);  // noise to feel human
+                // Add small noise so AI doesn't move perfectly to centre every time
+                _targetX = target.transform.position.x
+                           + Random.Range(-noiseAmount, noiseAmount);
             }
 
-            // Account for direction bias from profile
+            // Blend in direction bias so AI leans the same way the player did
             _targetX += _profile.directionBias * noiseAmount;
         }
 
@@ -216,31 +216,35 @@ namespace DoodleClimb.AI
             if (_profile == null) return;
 
             float speed = overrideMoveSpeed > 0f ? overrideMoveSpeed : _profile.avgMoveSpeed;
-            float dir = Mathf.Sign(_targetX - transform.position.x);
+            float dir   = Mathf.Sign(_targetX - transform.position.x);
             float noise = Random.Range(-noiseAmount, noiseAmount) * 0.3f;
 
-            _rb.linearVelocity = new Vector2(
+            _rb.velocity = new Vector2(
                 dir * speed * (1f + noise),
-                _rb.linearVelocity.y
+                _rb.velocity.y
             );
         }
 
-        // ── Predict where a moving platform will be when the AI arrives ───────────
+        // ── Predict moving platform position at time of arrival ───────────────────
         private float PredictMovingPlatformX(Platforms.Platform p)
         {
+            float vy         = Mathf.Abs(_rb.velocity.y);
             float timeToReach = Mathf.Abs(p.transform.position.y - transform.position.y)
-                / Mathf.Max(1f, Mathf.Abs(_rb.linearVelocity.y));
+                              / Mathf.Max(1f, vy);
             return p.transform.position.x + p.HorizontalVelocity * timeToReach;
         }
 
-        // ── Platform landing callback ─────────────────────────────────────────────
+        // ── Platform landing callback (called by Platform.cs) ─────────────────────
         public void OnLandedOnPlatform(string platformType, bool isMovingPlatform)
         {
             _lastLandTime = Time.time;
 
-            float delay = overrideJumpDelay > 0f ? overrideJumpDelay : _profile?.avgJumpDelay ?? 0.05f;
+            float delay = overrideJumpDelay > 0f
+                ? overrideJumpDelay
+                : (_profile != null ? _profile.avgJumpDelay : 0.05f);
+
             delay += Random.Range(-noiseAmount * 0.05f, noiseAmount * 0.05f);
-            delay = Mathf.Max(0f, delay);
+            delay  = Mathf.Max(0f, delay);
 
             StartCoroutine(JumpAfterDelay(delay));
         }
@@ -254,21 +258,21 @@ namespace DoodleClimb.AI
         // ── Physics helper ────────────────────────────────────────────────────────
         private void ApplyFallGravity()
         {
-            if (_rb.linearVelocity.y < 0f)
+            if (_rb.velocity.y < 0f)
             {
-                _rb.linearVelocity += Vector2.up
+                _rb.velocity += Vector2.up
                     * Physics2D.gravity.y
                     * (fallGravityMultiplier - 1f)
                     * Time.deltaTime;
             }
         }
 
-        // ── Death ─────────────────────────────────────────────────────────────────
+        // ── Death / Revive ────────────────────────────────────────────────────────
         public void Die()
         {
             if (!_isAlive) return;
-            _isAlive = false;
-            _rb.linearVelocity = Vector2.zero;
+            _isAlive     = false;
+            _rb.velocity = Vector2.zero;
             _rb.bodyType = RigidbodyType2D.Kinematic;
             OnDied?.Invoke();
         }
@@ -276,12 +280,13 @@ namespace DoodleClimb.AI
         public void Revive(Vector3 position)
         {
             transform.position = position;
-            _rb.bodyType = RigidbodyType2D.Dynamic;
-            _rb.linearVelocity = Vector2.zero;
-            _isAlive = true;
+            _rb.bodyType       = RigidbodyType2D.Dynamic;
+            _rb.velocity       = Vector2.zero;
+            _isAlive           = true;
         }
 
+        // ── Public getters ────────────────────────────────────────────────────────
         public float CurrentHeight => transform.position.y;
-        public bool IsAlive => _isAlive;
+        public bool  IsAlive       => _isAlive;
     }
 }
