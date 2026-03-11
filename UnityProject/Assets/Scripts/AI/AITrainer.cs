@@ -5,7 +5,11 @@ namespace DoodleClimb.AI
 {
     // ── Data structures ───────────────────────────────────────────────────────────
 
-    /// <summary>Statistical AI profile built from multiple runs.</summary>
+    /// <summary>
+    /// Statistical AI profile built from multiple runs.
+    /// Updated every run using an exponential moving average so the AI
+    /// gradually evolves to match (and eventually exceed) the player.
+    /// </summary>
     [System.Serializable]
     public class AIProfile
     {
@@ -22,42 +26,67 @@ namespace DoodleClimb.AI
         [Header("Platform Reactions")]
         public float reactionTime = 0.3f;
 
-        [Header("Skill Metrics")]
+        [Header("Skill Metrics (0 = weak, 1 = expert)")]
         [Range(0f, 1f)]
-        public float riskLevel = 0.5f;      // how often player attempts difficult jumps
+        public float riskLevel = 0.5f;          // how often player attempts risky jumps
         [Range(0f, 1f)]
-        public float jumpPrecision = 0.5f;  // how accurate jump timing is
+        public float jumpPrecision = 0.5f;      // consistency of jump timing
         [Range(0f, 1f)]
-        public float movementSmoothness = 0.5f; // how smoothly the player moves
+        public float movementSmoothness = 0.5f; // how rarely the player reverses direction
+        [Range(0f, 1f)]
+        public float landingAccuracy = 0.5f;    // how close to platform centre landings are
+        [Range(0f, 1f)]
+        public float distancePrecision = 0.5f;  // how well the player reads gap distances
 
         [Header("Evolution")]
-        public int totalRunsAnalyzed = 0;
-        public float bestScoreEver = 0f;
+        public int   totalRunsAnalyzed = 0;
+        public float bestScoreEver     = 0f;
 
-        /// <summary>Returns a human-readable summary of the profile.</summary>
+        /// <summary>
+        /// The score the AI will set as its challenge target for the next vs-AI run.
+        /// Starts at bestScoreEver + 5% — increases by 5% each time the AI beats the player.
+        /// </summary>
+        public float challengeTargetScore = 0f;
+
+        /// <summary>Human-readable skill tier based on jumpPrecision + movementSmoothness.</summary>
+        public string SkillTier
+        {
+            get
+            {
+                float skill = (jumpPrecision + movementSmoothness + landingAccuracy) / 3f;
+                if (skill > 0.85f) return "Expert";
+                if (skill > 0.65f) return "Advanced";
+                if (skill > 0.45f) return "Intermediate";
+                if (skill > 0.25f) return "Beginner";
+                return "Novice";
+            }
+        }
+
         public override string ToString()
         {
-            return $"AIProfile | Runs: {totalRunsAnalyzed} | Best: {bestScoreEver:0} | " +
-                   $"Speed: {avgMoveSpeed:0.0} | Bias: {directionBias:+0.00;-0.00;0} | " +
-                   $"Reaction: {reactionTime:0.000}s | Risk: {riskLevel:0.00} | " +
-                   $"Precision: {jumpPrecision:0.00} | Smoothness: {movementSmoothness:0.00}";
+            return $"AIProfile | Runs:{totalRunsAnalyzed} | Best:{bestScoreEver:0} | " +
+                   $"Speed:{avgMoveSpeed:0.0} | Bias:{directionBias:+0.00;-0.00;0} | " +
+                   $"Reaction:{reactionTime:0.000}s | Skill:{SkillTier}";
         }
     }
 
     /// <summary>
-    /// Analyses recorded PlayerActionData and ghost frames to produce or update an AIProfile.
+    /// Analyses recorded PlayerActionData (including environment state and outcomes)
+    /// to produce or update an AIProfile.
     ///
     /// Key computations:
-    ///   • avgMoveSpeed        — mean |velocityX| across all action samples
-    ///   • avgJumpDelay        — mean time between landing and jumping
-    ///   • directionBias       — net rightward tendency of horizontal velocity
-    ///   • reactionTime        — mean recorded reaction to moving platforms
-    ///   • riskLevel           — proportion of Breakable/Temporary platform landings
-    ///   • jumpPrecision       — inverse of std-dev of jumpDelay (normalised)
-    ///   • movementSmoothness  — inverse of mean direction-change rate (normalised)
+    ///   avgMoveSpeed       — mean |velocityX| across all action samples
+    ///   avgJumpDelay       — mean time between landing and jumping
+    ///   directionBias      — net rightward tendency of horizontal velocity
+    ///   reactionTime       — mean recorded reaction to moving platforms
+    ///   riskLevel          — proportion of Breakable/Temporary platform attempts
+    ///   jumpPrecision      — inverse of std-dev of jumpDelay (normalised)
+    ///   movementSmoothness — inverse of mean direction-change rate (normalised)
+    ///   landingAccuracy    — inverse of mean landing error (how close to platform centre)
+    ///   distancePrecision  — how accurately the player gauges gap distances (jump success rate)
     ///
-    /// Profiles accumulate across runs using exponential moving averages so the AI
-    /// gradually "evolves" to match the player rather than forgetting old runs.
+    /// Uses exponential moving average blending so each run shifts the profile
+    /// gradually — the AI gets stronger over many runs rather than resetting.
     /// </summary>
     public class AITrainer : MonoBehaviour
     {
@@ -70,6 +99,10 @@ namespace DoodleClimb.AI
         [Tooltip("Weight given to new data vs existing profile (0=never update, 1=always replace).")]
         [Range(0.01f, 1f)]
         public float learningRate = 0.35f;
+
+        [Header("AI Challenge")]
+        [Tooltip("How much above the player's best score the AI challenge target is set, as a multiplier.")]
+        public float challengeScoreMultiplier = 1.05f;  // default: AI target = best × 1.05
 
         [Header("Minimum samples")]
         [Tooltip("Minimum action records needed before a meaningful profile can be built.")]
@@ -87,10 +120,11 @@ namespace DoodleClimb.AI
         // ── Public entry point ────────────────────────────────────────────────────
 
         /// <summary>
-        /// Call this at the end of each player run to update the AI profile.
-        /// Pass the score so we can track evolution.
+        /// Call at the end of each player run to update the AI profile.
+        /// runScore is the player's height score this run.
+        /// aiWon is true if the AI clone beat the player in a vs-AI run.
         /// </summary>
-        public void TrainFromLatestRun(float runScore)
+        public void TrainFromLatestRun(float runScore, bool aiWon = false)
         {
             List<PlayerActionData> actions = _recorder.GetActionHistory();
 
@@ -101,7 +135,7 @@ namespace DoodleClimb.AI
             }
 
             AIProfile newData = AnalyseActions(actions);
-            BlendIntoProfile(newData, runScore);
+            BlendIntoProfile(newData, runScore, aiWon);
 
             Debug.Log($"[AITrainer] Profile updated. {profile}");
         }
@@ -111,24 +145,24 @@ namespace DoodleClimb.AI
         {
             AIProfile result = new AIProfile();
 
-            // Accumulators
-            double sumSpeed = 0;
-            double sumJumpDelay = 0;
-            double sumDirectionX = 0;
-            double sumReaction = 0;
-            int reactionCount = 0;
-            int riskCount = 0;
+            double sumSpeed          = 0;
+            double sumJumpDelay      = 0;
+            double sumDirectionX     = 0;
+            int    riskCount         = 0;
+            int    successCount      = 0;
+            double sumLandingError   = 0;
+            int    landingCount      = 0;
+            double sumDistancePrecision = 0;
+            int    distanceCount     = 0;
 
-            // For precision (std-dev of jumpDelay)
             List<float> jumpDelays = new List<float>();
-            // For smoothness (direction changes)
             float prevVX = 0f;
-            int directionChanges = 0;
+            int   directionChanges = 0;
 
             foreach (PlayerActionData a in actions)
             {
-                sumSpeed += Mathf.Abs(a.velocityX);
-                sumJumpDelay += a.jumpDelay;
+                sumSpeed      += Mathf.Abs(a.velocityX);
+                sumJumpDelay  += a.jumpDelay;
                 sumDirectionX += a.velocityX;
                 jumpDelays.Add(a.jumpDelay);
 
@@ -139,63 +173,104 @@ namespace DoodleClimb.AI
                     Mathf.Sign(a.velocityX) != Mathf.Sign(prevVX))
                     directionChanges++;
 
+                // Outcomes
+                if (a.outcome == JumpOutcome.SuccessfulLanding)
+                {
+                    successCount++;
+                    sumLandingError += a.landingError;
+                    landingCount++;
+                }
+
+                // Distance precision: was the jump distance close to the actual gap?
+                if (a.distanceToPlatform > 0f)
+                {
+                    // Normalise: perfect = 1.0, terrible = 0.0
+                    float precision = a.outcome == JumpOutcome.SuccessfulLanding ? 1f : 0f;
+                    sumDistancePrecision += precision;
+                    distanceCount++;
+                }
+
                 prevVX = a.velocityX;
             }
 
             int n = actions.Count;
-            result.avgMoveSpeed = Mathf.Max(0.1f, (float)(sumSpeed / n));
-            result.avgJumpDelay = Mathf.Max(0f, (float)(sumJumpDelay / n));
-            result.directionBias = Mathf.Clamp((float)(sumDirectionX / n) / result.avgMoveSpeed, -1f, 1f);
 
-            // Reaction time from recorder
+            result.avgMoveSpeed  = Mathf.Max(0.1f, (float)(sumSpeed / n));
+            result.avgJumpDelay  = Mathf.Max(0f, (float)(sumJumpDelay / n));
+            result.directionBias = Mathf.Clamp(
+                (float)(sumDirectionX / n) / result.avgMoveSpeed, -1f, 1f);
+
             result.reactionTime = _recorder.LatestReactionTime > 0f
                 ? _recorder.LatestReactionTime
                 : profile.reactionTime;
 
-            // Risk level
             result.riskLevel = Mathf.Clamp01((float)riskCount / n);
 
-            // Jump precision: small std-dev → high precision
+            // Jump precision: tight std-dev → high precision
             float meanDelay = result.avgJumpDelay;
-            double variance = 0;
+            double variance  = 0;
             foreach (float d in jumpDelays)
                 variance += (d - meanDelay) * (d - meanDelay);
-            float stdDev = Mathf.Sqrt((float)(variance / jumpDelays.Count));
-            result.jumpPrecision = Mathf.Clamp01(1f - Mathf.InverseLerp(0f, 0.5f, stdDev));
+            float stdDev = jumpDelays.Count > 1
+                ? Mathf.Sqrt((float)(variance / jumpDelays.Count)) : 0f;
+            result.jumpPrecision =
+                Mathf.Clamp01(1f - Mathf.InverseLerp(0f, 0.5f, stdDev));
 
             // Movement smoothness: few direction changes → smooth
             float changeRate = (float)directionChanges / n;
-            result.movementSmoothness = Mathf.Clamp01(1f - Mathf.InverseLerp(0f, 0.5f, changeRate));
+            result.movementSmoothness =
+                Mathf.Clamp01(1f - Mathf.InverseLerp(0f, 0.5f, changeRate));
+
+            // Landing accuracy: small error → high accuracy (max perfect error ~0.2 units)
+            result.landingAccuracy = landingCount > 0
+                ? Mathf.Clamp01(1f - Mathf.InverseLerp(0f, 0.5f,
+                    (float)(sumLandingError / landingCount)))
+                : 0.5f;
+
+            // Distance precision: fraction of jumps that land successfully
+            result.distancePrecision = distanceCount > 0
+                ? Mathf.Clamp01((float)(sumDistancePrecision / distanceCount))
+                : 0.5f;
 
             return result;
         }
 
         // ── Blending (evolution) ──────────────────────────────────────────────────
-        private void BlendIntoProfile(AIProfile newData, float runScore)
+        private void BlendIntoProfile(AIProfile newData, float runScore, bool aiWon)
         {
             float lr = learningRate;
-            profile.avgMoveSpeed    = Lerp(profile.avgMoveSpeed,    newData.avgMoveSpeed,    lr);
-            profile.avgJumpDelay    = Lerp(profile.avgJumpDelay,    newData.avgJumpDelay,    lr);
-            profile.directionBias   = Lerp(profile.directionBias,   newData.directionBias,   lr);
-            profile.reactionTime    = Lerp(profile.reactionTime,    newData.reactionTime,    lr);
-            profile.riskLevel       = Lerp(profile.riskLevel,       newData.riskLevel,       lr);
-            profile.jumpPrecision   = Lerp(profile.jumpPrecision,   newData.jumpPrecision,   lr);
-            profile.movementSmoothness = Lerp(
-                profile.movementSmoothness, newData.movementSmoothness, lr);
+            profile.avgMoveSpeed       = Lerp(profile.avgMoveSpeed,       newData.avgMoveSpeed,       lr);
+            profile.avgJumpDelay       = Lerp(profile.avgJumpDelay,       newData.avgJumpDelay,       lr);
+            profile.directionBias      = Lerp(profile.directionBias,      newData.directionBias,      lr);
+            profile.reactionTime       = Lerp(profile.reactionTime,       newData.reactionTime,       lr);
+            profile.riskLevel          = Lerp(profile.riskLevel,          newData.riskLevel,          lr);
+            profile.jumpPrecision      = Lerp(profile.jumpPrecision,      newData.jumpPrecision,      lr);
+            profile.movementSmoothness = Lerp(profile.movementSmoothness, newData.movementSmoothness, lr);
+            profile.landingAccuracy    = Lerp(profile.landingAccuracy,    newData.landingAccuracy,    lr);
+            profile.distancePrecision  = Lerp(profile.distancePrecision,  newData.distancePrecision,  lr);
 
             profile.totalRunsAnalyzed++;
+
             if (runScore > profile.bestScoreEver)
                 profile.bestScoreEver = runScore;
+
+            // Update the AI Challenge target
+            // If the AI won, raise the challenge target further (AI keeps improving)
+            float multiplier = aiWon
+                ? challengeScoreMultiplier * 1.05f
+                : challengeScoreMultiplier;
+
+            profile.challengeTargetScore =
+                Mathf.Max(profile.bestScoreEver * multiplier, profile.bestScoreEver + 10f);
         }
 
         private float Lerp(float current, float target, float t) =>
             current + (target - current) * t;
 
         // ── Getters ───────────────────────────────────────────────────────────────
-        public AIProfile GetProfile() => profile;
-        public bool IsProfileReady => profile.totalRunsAnalyzed > 0;
+        public AIProfile GetProfile()      => profile;
+        public bool      IsProfileReady    => profile.totalRunsAnalyzed > 0;
 
-        /// <summary>Resets profile to defaults (use when player wants a fresh AI).</summary>
         public void ResetProfile()
         {
             profile = new AIProfile();

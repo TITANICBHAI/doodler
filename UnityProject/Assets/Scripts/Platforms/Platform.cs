@@ -5,63 +5,55 @@ namespace DoodleClimb.Platforms
     /// <summary>
     /// Represents a single platform in the level.
     /// Handles static, moving, breakable, and temporary behaviours.
-    /// Calls PlayerController.OnLanded when the player touches it.
+    /// Calls PlayerController.OnLanded (or AIPlayerController equivalent) when
+    /// the player touches the top surface.  Passes the platform's centre X so
+    /// the AIRecorder can compute landing accuracy.
     /// </summary>
     public class Platform : MonoBehaviour
     {
         // ── Platform types ────────────────────────────────────────────────────────
-        public enum PlatformType
-        {
-            Static,
-            Moving,
-            Breakable,
-            Temporary
-        }
+        public enum PlatformType { Static, Moving, Breakable, Temporary }
 
         // ── Inspector ─────────────────────────────────────────────────────────────
         [Header("Type")]
         public PlatformType platformType = PlatformType.Static;
 
         [Header("Moving Platform")]
-        [Tooltip("Horizontal move distance from spawn point.")]
         public float moveRange = 2f;
         public float moveSpeed = 2f;
 
         [Header("Breakable Platform")]
-        [Tooltip("Frames the platform survives after first contact before breaking.")]
+        [Tooltip("Seconds between first contact and collapse.")]
         public float breakDelay = 0.15f;
 
         [Header("Temporary Platform")]
-        [Tooltip("Seconds the temporary platform stays visible before fading.")]
         public float visibleDuration = 2f;
-        public float fadeDuration = 0.5f;
+        public float fadeDuration    = 0.5f;
 
         // ── Internal state ────────────────────────────────────────────────────────
-        private Vector3 _startPosition;
-        private int _moveDirection = 1;
-        private bool _broken = false;
-        private bool _fadingOut = false;
-        private float _spawnTime;
-        private SpriteRenderer _spriteRenderer;
-        private Collider2D _collider;
-
-        // ── References ────────────────────────────────────────────────────────────
+        private Vector3         _startPosition;
+        private int             _moveDirection = 1;
+        private bool            _broken        = false;
+        private bool            _fadingOut     = false;
+        private float           _spawnTime;
+        private SpriteRenderer  _spriteRenderer;
+        private Collider2D      _collider;
         private PlatformSpawner _spawner;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
         {
             _spriteRenderer = GetComponentInChildren<SpriteRenderer>();
-            _collider = GetComponent<Collider2D>();
-            _spawner = FindObjectOfType<PlatformSpawner>();
+            _collider       = GetComponent<Collider2D>();
+            _spawner        = FindObjectOfType<PlatformSpawner>();
         }
 
         private void OnEnable()
         {
             _startPosition = transform.position;
-            _broken = false;
-            _fadingOut = false;
-            _spawnTime = Time.time;
+            _broken        = false;
+            _fadingOut     = false;
+            _spawnTime     = Time.time;
 
             if (_spriteRenderer != null)
             {
@@ -69,9 +61,7 @@ namespace DoodleClimb.Platforms
                 c.a = 1f;
                 _spriteRenderer.color = c;
             }
-
-            if (_collider != null)
-                _collider.enabled = true;
+            if (_collider != null) _collider.enabled = true;
 
             ApplyVisualStyle();
         }
@@ -80,12 +70,8 @@ namespace DoodleClimb.Platforms
         {
             switch (platformType)
             {
-                case PlatformType.Moving:
-                    UpdateMoving();
-                    break;
-                case PlatformType.Temporary:
-                    UpdateTemporary();
-                    break;
+                case PlatformType.Moving:    UpdateMoving();    break;
+                case PlatformType.Temporary: UpdateTemporary(); break;
             }
         }
 
@@ -98,6 +84,20 @@ namespace DoodleClimb.Platforms
             ) - moveRange + _startPosition.x;
 
             transform.position = new Vector3(newX, transform.position.y, 0f);
+
+            // Notify any nearby player that a moving platform is close
+            Player.PlayerController nearby = FindNearbyPlayer();
+            if (nearby != null)
+                nearby.NotifyMovingPlatformNearby();
+        }
+
+        private Player.PlayerController FindNearbyPlayer()
+        {
+            // Simple distance check — cheaper than Physics2D.OverlapCircle every frame
+            Player.PlayerController p = FindObjectOfType<Player.PlayerController>();
+            if (p == null) return null;
+            float dist = Mathf.Abs(p.transform.position.y - transform.position.y);
+            return dist < 4f ? p : null;
         }
 
         private void UpdateTemporary()
@@ -119,9 +119,7 @@ namespace DoodleClimb.Platforms
                     c.a = Mathf.Clamp01(1f - t);
                     _spriteRenderer.color = c;
                 }
-
-                if (t >= 1f)
-                    Recycle();
+                if (t >= 1f) Recycle();
             }
         }
 
@@ -130,40 +128,33 @@ namespace DoodleClimb.Platforms
         {
             if (_broken) return;
 
-            // Only trigger when landing on the top surface
-            if (collision.relativeVelocity.y < 0f) return;
+            // Only trigger when the character is falling onto the top surface
+            foreach (ContactPoint2D contact in collision.contacts)
+            {
+                if (contact.normal.y < 0.5f) return; // not landing on top
+            }
 
-            // Check for player or AI player
-            Player.PlayerController player = collision.gameObject.GetComponent<Player.PlayerController>();
+            float centreX = transform.position.x;
+
+            Player.PlayerController player =
+                collision.gameObject.GetComponent<Player.PlayerController>();
             if (player != null)
             {
-                HandlePlayerLanding(player);
+                player.OnLanded(platformType.ToString(), platformType == PlatformType.Moving, centreX);
+                if (platformType == PlatformType.Breakable)
+                    Invoke(nameof(BreakPlatform), breakDelay);
                 return;
             }
 
-            AI.AIPlayerController aiPlayer = collision.gameObject.GetComponent<AI.AIPlayerController>();
+            AI.AIPlayerController aiPlayer =
+                collision.gameObject.GetComponent<AI.AIPlayerController>();
             if (aiPlayer != null)
             {
-                HandleAILanding(aiPlayer);
+                aiPlayer.OnLandedOnPlatform(
+                    platformType.ToString(), platformType == PlatformType.Moving);
+                if (platformType == PlatformType.Breakable)
+                    Invoke(nameof(BreakPlatform), breakDelay);
             }
-        }
-
-        private void HandlePlayerLanding(Player.PlayerController player)
-        {
-            bool isMoving = platformType == PlatformType.Moving;
-            player.OnLanded(platformType.ToString(), isMoving);
-
-            if (platformType == PlatformType.Breakable)
-                Invoke(nameof(BreakPlatform), breakDelay);
-        }
-
-        private void HandleAILanding(AI.AIPlayerController aiPlayer)
-        {
-            bool isMoving = platformType == PlatformType.Moving;
-            aiPlayer.OnLandedOnPlatform(platformType.ToString(), isMoving);
-
-            if (platformType == PlatformType.Breakable)
-                Invoke(nameof(BreakPlatform), breakDelay);
         }
 
         // ── Break logic ───────────────────────────────────────────────────────────
@@ -171,8 +162,6 @@ namespace DoodleClimb.Platforms
         {
             _broken = true;
             if (_collider != null) _collider.enabled = false;
-
-            // Brief visual shake before recycling
             if (_spriteRenderer != null)
                 StartCoroutine(ShakeAndRecycle());
             else
@@ -181,12 +170,12 @@ namespace DoodleClimb.Platforms
 
         private System.Collections.IEnumerator ShakeAndRecycle()
         {
-            float t = 0f;
-            Vector3 origin = transform.position;
+            float t      = 0f;
+            Vector3 orig = transform.position;
             while (t < 0.25f)
             {
                 t += Time.deltaTime;
-                transform.position = origin + (Vector3)Random.insideUnitCircle * 0.08f;
+                transform.position = orig + (Vector3)(Random.insideUnitCircle * 0.08f);
                 yield return null;
             }
             Recycle();
@@ -195,47 +184,36 @@ namespace DoodleClimb.Platforms
         // ── Recycling ─────────────────────────────────────────────────────────────
         private void Recycle()
         {
-            if (_spawner != null)
-                _spawner.RecyclePlatform(this);
-            else
-                gameObject.SetActive(false);
+            if (_spawner != null) _spawner.RecyclePlatform(this);
+            else gameObject.SetActive(false);
         }
 
         // ── Visual theming ────────────────────────────────────────────────────────
         private void ApplyVisualStyle()
         {
             if (_spriteRenderer == null) return;
-
             switch (platformType)
             {
-                case PlatformType.Static:
-                    _spriteRenderer.color = new Color(0.22f, 0.76f, 0.38f); // green
-                    break;
-                case PlatformType.Moving:
-                    _spriteRenderer.color = new Color(0.20f, 0.55f, 0.90f); // blue
-                    break;
-                case PlatformType.Breakable:
-                    _spriteRenderer.color = new Color(0.85f, 0.35f, 0.20f); // orange-red
-                    break;
-                case PlatformType.Temporary:
-                    _spriteRenderer.color = new Color(0.80f, 0.60f, 0.10f); // yellow
-                    break;
+                case PlatformType.Static:    _spriteRenderer.color = new Color(0.22f, 0.76f, 0.38f); break; // green
+                case PlatformType.Moving:    _spriteRenderer.color = new Color(0.20f, 0.55f, 0.90f); break; // blue
+                case PlatformType.Breakable: _spriteRenderer.color = new Color(0.85f, 0.35f, 0.20f); break; // red
+                case PlatformType.Temporary: _spriteRenderer.color = new Color(0.80f, 0.60f, 0.10f); break; // yellow
             }
         }
 
         // ── Public helpers ────────────────────────────────────────────────────────
-        public PlatformType Type => platformType;
-        public bool IsBroken => _broken;
+        public PlatformType Type    => platformType;
+        public bool         IsBroken => _broken;
 
-        /// <summary>Returns the horizontal velocity of this platform (0 for non-moving).</summary>
+        /// <summary>Current horizontal velocity (0 for non-moving platforms).</summary>
         public float HorizontalVelocity
         {
             get
             {
                 if (platformType != PlatformType.Moving) return 0f;
-                float age = Time.time - _spawnTime;
-                float phase = Mathf.PingPong(age * moveSpeed, moveRange * 2f);
-                return (phase < moveRange) ? moveSpeed : -moveSpeed;
+                float phase = Mathf.PingPong(
+                    (Time.time - _spawnTime) * moveSpeed, moveRange * 2f);
+                return phase < moveRange ? moveSpeed : -moveSpeed;
             }
         }
     }
