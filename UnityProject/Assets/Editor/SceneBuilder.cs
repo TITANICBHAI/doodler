@@ -13,20 +13,13 @@ namespace DoodleClimb.Editor
     /// HOW TO USE — 5 steps only:
     ///   1. Create a new 2D project in Unity (2022 LTS or later).
     ///   2. Window → Package Manager → TextMeshPro → Install.
-    ///      When prompted, click "Import TMP Essentials".
+    ///      When prompted click "Import TMP Essentials".
     ///   3. Drag the entire Assets/ folder from this project into your Unity project.
-    ///   4. Wait for the green tick (compilation done).
-    ///   5. Top menu bar: DoodleClimb → Build Scene.
-    ///      Press Play to test.  File → Build Settings → Android → Build and Run for APK.
+    ///   4. Wait for the green compile tick.
+    ///   5. Top menu: DoodleClimb → Build Scene.  Press Play to test.
+    ///      File → Build Settings → Android → Build and Run for APK.
     ///
     /// Zero manual Inspector wiring required.
-    ///
-    /// FIXES applied versus earlier version:
-    ///   - FindObjectsOfType (compatible with Unity 2022+) instead of FindObjectsByType
-    ///   - RectTransform created with new GameObject(name, typeof(RectTransform))
-    ///     instead of AddComponent<RectTransform>() which throws an error on fresh GOs
-    ///   - Font style parameter changed to TMPro.FontStyles (correct type)
-    ///   - gameOverTitleText captured directly from AddTMPText return value
     /// </summary>
     public static class SceneBuilder
     {
@@ -37,6 +30,7 @@ namespace DoodleClimb.Editor
         private static readonly Color ColPlatform  = new Color(0.22f, 0.76f, 0.38f);
         private static readonly Color ColBtnNorm   = new Color(0.22f, 0.76f, 0.38f);
         private static readonly Color ColBtnVsAI   = new Color(0.95f, 0.38f, 0.27f);
+        private static readonly Color ColBtnWatch  = new Color(0.25f, 0.55f, 0.95f);
         private static readonly Color ColBtnGrey   = new Color(0.52f, 0.52f, 0.52f);
         private static readonly Color ColText      = new Color(0.12f, 0.12f, 0.12f);
         private static readonly Color ColTextLight = new Color(1f, 1f, 1f);
@@ -52,7 +46,6 @@ namespace DoodleClimb.Editor
                 "Build", "Cancel"))
                 return;
 
-            // Destroy every existing root GameObject
             GameObject[] all = Object.FindObjectsOfType<GameObject>();
             foreach (GameObject go in all)
                 if (go != null) Object.DestroyImmediate(go);
@@ -64,20 +57,20 @@ namespace DoodleClimb.Editor
             GameObject platformPrefab = CreatePlatformPrefab();
 
             // ── Spawn points ──────────────────────────────────────────────────────
-            Transform playerSpawn = CreateMarker("PlayerSpawn", new Vector3(0f,    1f, 0f));
-            Transform aiSpawn     = CreateMarker("AISpawn",     new Vector3(0.8f,  1f, 0f));
+            Transform playerSpawn = CreateMarker("PlayerSpawn", new Vector3(0f,   1f, 0f));
+            Transform aiSpawn     = CreateMarker("AISpawn",     new Vector3(0.8f, 1f, 0f));
 
-            // ── Characters ───────────────────────────────────────────────────────
+            // ── Characters ────────────────────────────────────────────────────────
             GameObject playerGO   = CreateCharacter("Player",   ColPlayer, 0f);
             GameObject aiPlayerGO = CreateCharacter("AIPlayer", ColAI,     0.8f);
-            aiPlayerGO.SetActive(false); // only active in vs-AI mode
+            aiPlayerGO.SetActive(false);
 
-            // ── Systems (all on one GameObject for simplicity) ────────────────────
+            // ── Systems ───────────────────────────────────────────────────────────
             GameObject sysGO = new GameObject("GameManager");
             sysGO.AddComponent<Game.GameModeManager>();
-            Game.GameManager   gameManager = sysGO.AddComponent<Game.GameManager>();
-            AI.AIRecorder      recorder    = sysGO.AddComponent<AI.AIRecorder>();
-            AI.AITrainer       trainer     = sysGO.AddComponent<AI.AITrainer>();
+            Game.GameManager  gameManager = sysGO.AddComponent<Game.GameManager>();
+            AI.AIRecorder     recorder    = sysGO.AddComponent<AI.AIRecorder>();
+            AI.AITrainer      trainer     = sysGO.AddComponent<AI.AITrainer>();
 
             // ── Platform spawner ──────────────────────────────────────────────────
             GameObject spawnerGO = new GameObject("PlatformSpawner");
@@ -86,21 +79,25 @@ namespace DoodleClimb.Editor
             spawner.platformPrefab = platformPrefab;
 
             // ── Camera follow ─────────────────────────────────────────────────────
-            Game.CameraFollow camFollow = mainCam.gameObject.AddComponent<Game.CameraFollow>();
-            camFollow.playerTransform   = playerGO.transform;
-            camFollow.aiPlayerTransform = null;
+            Game.CameraFollow camFollow =
+                mainCam.gameObject.AddComponent<Game.CameraFollow>();
+            camFollow.playerTransform    = playerGO.transform;
+            camFollow.aiPlayerTransform  = null;
+            camFollow.enableDynamicZoom  = true;
+            camFollow.minOrthographicSize = 9f;
+            camFollow.maxOrthographicSize = 16f;
 
-            // ── UI (Canvas + all panels) ──────────────────────────────────────────
+            // ── UI ────────────────────────────────────────────────────────────────
             UI.UIManager uiManager = BuildCanvas();
 
-            // ── Wire up GameManager references ────────────────────────────────────
-            gameManager.player           = playerGO.GetComponent<Player.PlayerController>();
-            gameManager.aiPlayer         = aiPlayerGO.GetComponent<AI.AIPlayerController>();
-            gameManager.platformSpawner  = spawner;
-            gameManager.cameraFollow     = camFollow;
-            gameManager.uiManager        = uiManager;
-            gameManager.playerSpawnPoint = playerSpawn;
-            gameManager.aiPlayerSpawnPoint = aiSpawn;
+            // ── Wire GameManager ──────────────────────────────────────────────────
+            gameManager.player              = playerGO.GetComponent<Player.PlayerController>();
+            gameManager.aiPlayer            = aiPlayerGO.GetComponent<AI.AIPlayerController>();
+            gameManager.platformSpawner     = spawner;
+            gameManager.cameraFollow        = camFollow;
+            gameManager.uiManager           = uiManager;
+            gameManager.playerSpawnPoint    = playerSpawn;
+            gameManager.aiPlayerSpawnPoint  = aiSpawn;
 
             // ── Physics ───────────────────────────────────────────────────────────
             Physics2D.gravity = new Vector2(0f, -20f);
@@ -112,7 +109,7 @@ namespace DoodleClimb.Editor
             EditorUtility.DisplayDialog(
                 "Scene Built!",
                 "DoodleClimb is ready.\n\n" +
-                "▶  Press Play to test in the editor.\n" +
+                "▶  Press Play to test.\n" +
                 "▶  File → Build Settings → Android → Build and Run for APK.",
                 "Got it!");
         }
@@ -153,13 +150,14 @@ namespace DoodleClimb.Editor
 
             string dir = "Assets/Prefabs";
             System.IO.Directory.CreateDirectory(dir);
-            GameObject prefab = PrefabUtility.SaveAsPrefabAsset(go, dir + "/Platform.prefab");
+            GameObject prefab =
+                PrefabUtility.SaveAsPrefabAsset(go, dir + "/Platform.prefab");
             Object.DestroyImmediate(go);
             AssetDatabase.Refresh();
             return prefab;
         }
 
-        // ── Character (Player / AI) ───────────────────────────────────────────────
+        // ── Character ─────────────────────────────────────────────────────────────
         private static GameObject CreateCharacter(string name, Color colour, float spawnX)
         {
             GameObject go = new GameObject(name);
@@ -186,7 +184,7 @@ namespace DoodleClimb.Editor
             return go;
         }
 
-        // ── Canvas + all UI panels ────────────────────────────────────────────────
+        // ── Canvas + all panels ───────────────────────────────────────────────────
         private static UI.UIManager BuildCanvas()
         {
             // EventSystem
@@ -219,14 +217,14 @@ namespace DoodleClimb.Editor
             var skillTierTxt = MakeTMP(startPanel, "SkillTierText", "",
                 Vec(0, 290), Vec(700, 60), 36, ColText);
 
-            var btnPlayNormal  = MakeButton(startPanel, "PlayNormalBtn",  "PLAY",
-                Vec(0, 140), Vec(500, 110), ColBtnNorm);
+            var btnPlayNormal = MakeButton(startPanel, "PlayNormalBtn", "PLAY",
+                Vec(0, 130), Vec(500, 110), ColBtnNorm);
 
-            var btnPlayVsAI    = MakeButton(startPanel, "PlayVsAIBtn",   "vs AI CLONE",
-                Vec(0, 0),   Vec(500, 110), ColBtnVsAI);
+            var btnPlayVsAI = MakeButton(startPanel, "PlayVsAIBtn", "vs AI CLONE",
+                Vec(0, -10), Vec(500, 110), ColBtnVsAI);
 
-            var btnModeSelect  = MakeButton(startPanel, "ModeSelectBtn", "SELECT MODE",
-                Vec(0, -150), Vec(500, 80), ColBtnGrey);
+            var btnModeSelect = MakeButton(startPanel, "ModeSelectBtn", "MORE MODES",
+                Vec(0, -160), Vec(500, 80), ColBtnGrey);
 
             // ── MODE SELECT ───────────────────────────────────────────────────────
             GameObject modePanel = MakePanel(canvasGO, "ModeSelectPanel", ColPanel);
@@ -234,32 +232,36 @@ namespace DoodleClimb.Editor
             HideGroup(modeCG);
 
             MakeTMP(modePanel, "ModeTitleText", "CHOOSE MODE",
-                Vec(0, 600), Vec(800, 120), 64, ColText, TMPro.FontStyles.Bold);
+                Vec(0, 680), Vec(800, 120), 64, ColText, TMPro.FontStyles.Bold);
 
             var aiStatusTxt = MakeTMP(modePanel, "AIProfileStatusText",
                 "No AI data yet.\nPlay a Normal run first!",
-                Vec(0, 450), Vec(800, 120), 34, ColText);
+                Vec(0, 540), Vec(800, 120), 34, ColText);
 
-            var btnNormal    = MakeButton(modePanel, "NormalModeBtn", "NORMAL PLAY",
-                Vec(0, 280), Vec(600, 110), ColBtnNorm);
+            var btnNormal = MakeButton(modePanel, "NormalModeBtn", "NORMAL PLAY",
+                Vec(0, 360), Vec(600, 110), ColBtnNorm);
 
-            var btnVsAI2     = MakeButton(modePanel, "VsAIModeBtn", "vs AI CLONE",
-                Vec(0, 130), Vec(600, 110), ColBtnVsAI);
+            var btnVsAI2 = MakeButton(modePanel, "VsAIModeBtn", "vs AI CLONE",
+                Vec(0, 210), Vec(600, 110), ColBtnVsAI);
 
-            var btnBack      = MakeButton(modePanel, "ModeSelectBackBtn", "BACK",
-                Vec(0, -50), Vec(300, 80), ColBtnGrey);
+            // NEW — Watch AI button
+            var btnWatchAI = MakeButton(modePanel, "WatchAIBtn", "WATCH AI PLAY",
+                Vec(0, 60), Vec(600, 110), ColBtnWatch);
+
+            var btnBack = MakeButton(modePanel, "ModeSelectBackBtn", "BACK",
+                Vec(0, -100), Vec(300, 80), ColBtnGrey);
 
             // ── HUD ───────────────────────────────────────────────────────────────
             GameObject hudPanel = MakePanel(canvasGO, "HUDPanel",
-                new Color(0f, 0f, 0f, 0f)); // fully transparent background
-            CanvasGroup hudCG   = hudPanel.GetComponent<CanvasGroup>();
+                new Color(0f, 0f, 0f, 0f));
+            CanvasGroup hudCG = hudPanel.GetComponent<CanvasGroup>();
             HideGroup(hudCG);
 
             var playerScoreTxt = MakeTMP(hudPanel, "PlayerScoreText", "0",
                 Vec(-380, 860), Vec(400, 80), 56, ColText, TMPro.FontStyles.Bold);
             playerScoreTxt.alignment = TextAlignmentOptions.Left;
 
-            // AI score container — shown only in vs-AI mode
+            // AI score container (vs-AI mode)
             GameObject aiScoreContainer = MakeRTChild(hudPanel, "AIScoreContainer",
                 Vec(380, 860), Vec(400, 80));
             aiScoreContainer.SetActive(false);
@@ -268,7 +270,13 @@ namespace DoodleClimb.Editor
                 Vec(0, 0), Vec(400, 80), 56, ColAI, TMPro.FontStyles.Bold);
             aiScoreTxt.alignment = TextAlignmentOptions.Right;
 
-            // Challenge container — shown in Normal mode once profile exists
+            // NEW — "WATCHING AI" banner (Watch AI mode)
+            var watchingAILbl = MakeTMP(hudPanel, "WatchingAILabel", "WATCHING AI",
+                Vec(0, 860), Vec(700, 90), 52,
+                new Color(0.25f, 0.55f, 0.95f), TMPro.FontStyles.Bold);
+            watchingAILbl.gameObject.SetActive(false);
+
+            // Challenge container (Normal mode)
             GameObject challengeContainer = MakeRTChild(hudPanel, "ChallengeContainer",
                 Vec(0, 760), Vec(800, 60));
             challengeContainer.SetActive(false);
@@ -284,20 +292,18 @@ namespace DoodleClimb.Editor
             CanvasGroup gameOverCG   = gameOverPanel.GetComponent<CanvasGroup>();
             HideGroup(gameOverCG);
 
-            // Capture return value directly — no Find() required
             var gameOverTitleTxt = MakeTMP(gameOverPanel, "GameOverTitleText", "Game Over",
                 Vec(0, 680), Vec(800, 130), 80, ColText, TMPro.FontStyles.Bold);
 
             var playerFinalTxt = MakeTMP(gameOverPanel, "PlayerFinalScoreText",
                 "Your Score: 0", Vec(0, 530), Vec(700, 80), 52, ColText);
 
-            // AI final score container
-            GameObject aiFinalContainer = MakeRTChild(gameOverPanel, "AIFinalScoreContainer",
-                Vec(0, 440), Vec(700, 80));
+            GameObject aiFinalContainer = MakeRTChild(gameOverPanel,
+                "AIFinalScoreContainer", Vec(0, 440), Vec(700, 80));
             aiFinalContainer.SetActive(false);
 
-            var aiFinalTxt = MakeTMP(aiFinalContainer, "AIFinalScoreText", "AI Score: 0",
-                Vec(0, 0), Vec(700, 80), 52, ColAI);
+            var aiFinalTxt = MakeTMP(aiFinalContainer, "AIFinalScoreText",
+                "AI Score: 0", Vec(0, 0), Vec(700, 80), 52, ColAI);
 
             var winnerTxt = MakeTMP(gameOverPanel, "WinnerText", "",
                 Vec(0, 350), Vec(700, 90), 60,
@@ -306,7 +312,6 @@ namespace DoodleClimb.Editor
             var aiLearnedTxt = MakeTMP(gameOverPanel, "AILearnedText", "",
                 Vec(0, 260), Vec(700, 60), 34, ColText);
 
-            // Challenge result container
             GameObject challengeResultContainer =
                 MakeRTChild(gameOverPanel, "ChallengeResultContainer",
                     Vec(0, 170), Vec(700, 100));
@@ -315,10 +320,9 @@ namespace DoodleClimb.Editor
             var challengeResultTxt = MakeTMP(challengeResultContainer,
                 "ChallengeResultText", "", Vec(0, 30), Vec(700, 60), 40, ColText);
 
-            var newTargetTxt = MakeTMP(challengeResultContainer, "NewTargetText", "",
-                Vec(0, -30), Vec(700, 50), 32, ColText);
+            var newTargetTxt = MakeTMP(challengeResultContainer, "NewTargetText",
+                "", Vec(0, -30), Vec(700, 50), 32, ColText);
 
-            // Skill breakdown container
             GameObject skillBreakdown = MakeRTChild(gameOverPanel,
                 "SkillBreakdownContainer", Vec(0, -80), Vec(700, 280));
             skillBreakdown.SetActive(false);
@@ -326,16 +330,16 @@ namespace DoodleClimb.Editor
             MakeTMP(skillBreakdown, "SkillBreakdownTitle", "── Your AI Profile ──",
                 Vec(0, 120), Vec(700, 50), 32, ColText, TMPro.FontStyles.Bold);
 
-            var skillTierResultTxt  = MakeTMP(skillBreakdown, "SkillTierResultText",
-                "Skill: Novice",       Vec(0,  70), Vec(700, 44), 30, ColText);
-            var jumpPrecisionTxt    = MakeTMP(skillBreakdown, "JumpPrecisionText",
-                "Jump Precision:  0%", Vec(0,  26), Vec(700, 44), 28, ColText);
-            var moveSmoothnessTxt   = MakeTMP(skillBreakdown, "MoveSmoothText",
-                "Smoothness:      0%", Vec(0, -18), Vec(700, 44), 28, ColText);
-            var landingAccTxt       = MakeTMP(skillBreakdown, "LandingAccText",
-                "Landing Accuracy:0%", Vec(0, -62), Vec(700, 44), 28, ColText);
-            var riskLevelTxt        = MakeTMP(skillBreakdown, "RiskLevelText",
-                "Risk Level:      0%", Vec(0,-106), Vec(700, 44), 28, ColText);
+            var skillTierResult  = MakeTMP(skillBreakdown, "SkillTierResultText",
+                "Skill: Novice",        Vec(0,  70), Vec(700, 44), 30, ColText);
+            var jumpPrecTxt      = MakeTMP(skillBreakdown, "JumpPrecisionText",
+                "Jump Precision:  0%",  Vec(0,  26), Vec(700, 44), 28, ColText);
+            var moveSmoothTxt    = MakeTMP(skillBreakdown, "MoveSmoothText",
+                "Smoothness:      0%",  Vec(0, -18), Vec(700, 44), 28, ColText);
+            var landingAccTxt    = MakeTMP(skillBreakdown, "LandingAccText",
+                "Landing Accuracy:0%",  Vec(0, -62), Vec(700, 44), 28, ColText);
+            var riskTxt          = MakeTMP(skillBreakdown, "RiskLevelText",
+                "Risk Level:      0%",  Vec(0,-106), Vec(700, 44), 28, ColText);
 
             var btnRestart  = MakeButton(gameOverPanel, "RestartButton", "PLAY AGAIN",
                 Vec(0, -490), Vec(500, 110), ColBtnNorm);
@@ -357,17 +361,19 @@ namespace DoodleClimb.Editor
 
             ui.normalModeButton     = btnNormal;
             ui.vsAIModeButton       = btnVsAI2;
+            ui.watchAIButton        = btnWatchAI;     // NEW
             ui.modeSelectBackButton = btnBack;
             ui.aiProfileStatusText  = aiStatusTxt;
 
-            ui.playerScoreText      = playerScoreTxt;
-            ui.aiScoreText          = aiScoreTxt;
-            ui.aiScoreContainer     = aiScoreContainer;
-            ui.challengeContainer   = challengeContainer;
-            ui.challengeTargetText  = challengeTargetTxt;
+            ui.playerScoreText       = playerScoreTxt;
+            ui.aiScoreText           = aiScoreTxt;
+            ui.aiScoreContainer      = aiScoreContainer;
+            ui.watchingAILabel       = watchingAILbl;  // NEW
+            ui.challengeContainer    = challengeContainer;
+            ui.challengeTargetText   = challengeTargetTxt;
             ui.challengeProgressText = challengeProgressTxt;
 
-            ui.gameOverTitleText        = gameOverTitleTxt;  // captured directly — no Find()
+            ui.gameOverTitleText        = gameOverTitleTxt;
             ui.playerFinalScoreText     = playerFinalTxt;
             ui.aiFinalScoreText         = aiFinalTxt;
             ui.winnerText               = winnerTxt;
@@ -377,28 +383,20 @@ namespace DoodleClimb.Editor
             ui.challengeResultText      = challengeResultTxt;
             ui.newTargetText            = newTargetTxt;
             ui.skillBreakdownContainer  = skillBreakdown;
-            ui.skillTierResultText      = skillTierResultTxt;
-            ui.jumpPrecisionText        = jumpPrecisionTxt;
-            ui.movementSmoothnessText   = moveSmoothnessTxt;
+            ui.skillTierResultText      = skillTierResult;
+            ui.jumpPrecisionText        = jumpPrecTxt;
+            ui.movementSmoothnessText   = moveSmoothTxt;
             ui.landingAccuracyText      = landingAccTxt;
-            ui.riskLevelText            = riskLevelTxt;
+            ui.riskLevelText            = riskTxt;
             ui.restartButton            = btnRestart;
             ui.mainMenuButton           = btnMainMenu;
 
             return ui;
         }
 
-        // ── UI Factory Helpers ────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Creates a full-screen panel with an Image background and CanvasGroup.
-        /// Uses new GameObject(name, typeof(RectTransform)) so the RectTransform
-        /// is set from the start — AddComponent&lt;RectTransform&gt;() is invalid on a
-        /// GameObject that already has a regular Transform.
-        /// </summary>
+        // ── UI factory helpers ────────────────────────────────────────────────────
         private static GameObject MakePanel(GameObject parent, string name, Color bg)
         {
-            // Create with RectTransform from the start (replaces plain Transform)
             GameObject go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent.transform, false);
 
@@ -418,23 +416,17 @@ namespace DoodleClimb.Editor
             return go;
         }
 
-        /// <summary>
-        /// Creates a child RectTransform container (no Image) at a given position/size.
-        /// Used for sub-containers like aiScoreContainer, challengeContainer, etc.
-        /// </summary>
         private static GameObject MakeRTChild(
             GameObject parent, string name, Vector2 pos, Vector2 size)
         {
             GameObject go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent.transform, false);
-
             RectTransform rt = (RectTransform)go.transform;
             rt.anchoredPosition = pos;
             rt.sizeDelta        = size;
             return go;
         }
 
-        /// <summary>Creates a TextMeshProUGUI label. Parameter is TMPro.FontStyles.</summary>
         private static TextMeshProUGUI MakeTMP(
             GameObject parent, string name, string text,
             Vector2 pos, Vector2 size, float fontSize, Color color,
@@ -457,7 +449,6 @@ namespace DoodleClimb.Editor
             return tmp;
         }
 
-        /// <summary>Creates a styled button with a centred label.</summary>
         private static Button MakeButton(
             GameObject parent, string name, string label,
             Vector2 pos, Vector2 size, Color bgColor)
@@ -481,7 +472,6 @@ namespace DoodleClimb.Editor
             cb.selectedColor    = bgColor;
             btn.colors          = cb;
 
-            // Label child
             GameObject lblGO = new GameObject("Label", typeof(RectTransform));
             lblGO.transform.SetParent(go.transform, false);
 

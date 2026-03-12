@@ -3,16 +3,14 @@ using UnityEngine;
 namespace DoodleClimb.Game
 {
     /// <summary>
-    /// Central coordinator for the game.
-    /// Manages the game loop, death detection, score tracking,
+    /// Central coordinator — manages the game loop, death detection, score tracking,
     /// and bridges all major systems (Spawner, Camera, Recorder, Trainer).
     ///
-    /// Modes:
-    ///   NormalPlay  — single player, infinite climbing
-    ///   VsAI        — player races their AI clone on the same generated level
-    ///
-    /// Singleton pattern prevents duplicate instances if the scene is rebuilt
-    /// without clearing the old one first.
+    /// Game Modes:
+    ///   NormalPlay — solo endless climb; AI records silently in the background
+    ///   VsAI       — player races their trained AI clone on the same level
+    ///   WatchAI    — spectator mode; player is hidden, camera follows AI only,
+    ///                run ends when the AI falls
     /// </summary>
     public class GameManager : MonoBehaviour
     {
@@ -20,9 +18,11 @@ namespace DoodleClimb.Game
         public static GameManager Instance { get; private set; }
 
         // ── Inspector ─────────────────────────────────────────────────────────────
-        [Header("References")]
-        public Player.PlayerController   player;
-        public AI.AIPlayerController     aiPlayer;
+        [Header("Characters")]
+        public Player.PlayerController player;
+        public AI.AIPlayerController   aiPlayer;
+
+        [Header("Systems")]
         public Platforms.PlatformSpawner platformSpawner;
         public CameraFollow              cameraFollow;
         public UI.UIManager              uiManager;
@@ -44,32 +44,25 @@ namespace DoodleClimb.Game
         private float _aiScore;
         private float _playerMaxY;
         private float _aiMaxY;
-
-        private bool _gameRunning;
+        private bool  _gameRunning;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
         {
-            // Singleton guard — destroy duplicate instances
-            if (Instance != null && Instance != this)
-            {
-                Destroy(gameObject);
-                return;
-            }
+            if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
 
             _modeManager = GetComponent<GameModeManager>();
             _recorder    = GetComponent<AI.AIRecorder>();
             _trainer     = GetComponent<AI.AITrainer>();
 
-            // Fallback: search scene if not on same GameObject
             if (_recorder == null) _recorder = FindObjectOfType<AI.AIRecorder>();
             if (_trainer  == null) _trainer  = FindObjectOfType<AI.AITrainer>();
         }
 
         private void Start()
         {
-            // Subscribe to death events once — never in StartGame (avoids duplicate listeners)
+            // Wire death events once — never inside StartGame (prevents duplicates)
             if (player   != null) player.OnDied   += OnPlayerDied;
             if (aiPlayer != null) aiPlayer.OnDied += OnAIDied;
 
@@ -98,10 +91,8 @@ namespace DoodleClimb.Game
         // ── Game flow ─────────────────────────────────────────────────────────────
         public void StartGame(GameModeManager.GameMode mode)
         {
-            if (_modeManager != null)
-                _modeManager.SetMode(mode);
+            _modeManager?.SetMode(mode);
 
-            // Reset all per-run state
             _playerScore = 0f;
             _aiScore     = 0f;
             _playerMaxY  = 0f;
@@ -112,51 +103,81 @@ namespace DoodleClimb.Game
             if (platformSpawner != null)
             {
                 platformSpawner.InitLevel(levelSeed);
-
                 if (_trainer != null && _trainer.IsProfileReady)
                     platformSpawner.ApplySkillProfile(_trainer.GetProfile());
             }
 
-            if (cameraFollow != null && playerSpawnPoint != null)
-                cameraFollow.ResetTo(playerSpawnPoint.position.y);
+            Vector3 spawnPos = playerSpawnPoint != null
+                ? playerSpawnPoint.position : Vector3.up;
 
-            if (player != null && playerSpawnPoint != null)
-                player.Revive(playerSpawnPoint.position);
+            if (cameraFollow != null)
+                cameraFollow.ResetTo(spawnPos.y);
 
-            bool vsAI = mode == GameModeManager.GameMode.VsAI;
+            bool isWatchAI = mode == GameModeManager.GameMode.WatchAI;
+            bool isVsAI    = mode == GameModeManager.GameMode.VsAI;
+            bool needsAI   = isVsAI || isWatchAI;
 
+            // ── Player setup ──────────────────────────────────────────────────────
+            if (player != null)
+            {
+                if (isWatchAI)
+                {
+                    // Spectator mode: freeze player at spawn, hide it
+                    player.Revive(spawnPos);
+                    player.SetInputEnabled(false);
+                    player.gameObject.SetActive(false);
+                }
+                else
+                {
+                    player.gameObject.SetActive(true);
+                    player.Revive(spawnPos);
+                }
+            }
+
+            // ── AI setup ──────────────────────────────────────────────────────────
             if (aiPlayer != null)
             {
-                aiPlayer.gameObject.SetActive(vsAI);
+                aiPlayer.gameObject.SetActive(needsAI);
 
-                if (vsAI && _trainer != null)
+                if (needsAI && _trainer != null)
                 {
                     bool useGhost = _recorder != null && _recorder.HasBestRun;
                     aiPlayer.Initialise(_trainer.GetProfile(), useGhost);
 
-                    Vector3 aiSpawnPos = aiPlayerSpawnPoint != null
+                    Vector3 aiSpawn = aiPlayerSpawnPoint != null
                         ? aiPlayerSpawnPoint.position
-                        : (playerSpawnPoint != null
-                            ? playerSpawnPoint.position + Vector3.right * 0.6f
-                            : Vector3.up);
+                        : spawnPos + Vector3.right * 0.6f;
 
-                    aiPlayer.Revive(aiSpawnPos);
+                    aiPlayer.Revive(aiSpawn);
                 }
             }
 
+            // ── Camera follow mode ────────────────────────────────────────────────
             if (cameraFollow != null)
-                cameraFollow.aiPlayerTransform = vsAI && aiPlayer != null
+            {
+                cameraFollow.aiPlayerTransform = needsAI && aiPlayer != null
                     ? aiPlayer.transform : null;
 
-            _recorder?.StartRecording();
+                if (isWatchAI)
+                    cameraFollow.SetFollowMode(CameraFollow.FollowMode.AIOnly);
+                else if (isVsAI)
+                    cameraFollow.SetFollowMode(CameraFollow.FollowMode.Both);
+                else
+                    cameraFollow.SetFollowMode(CameraFollow.FollowMode.PlayerOnly);
+            }
+
+            // ── Recording (not needed in Watch AI — we're observing, not training) ─
+            if (!isWatchAI)
+                _recorder?.StartRecording();
+
             _gameRunning = true;
 
             float challengeTarget = _trainer != null
                 ? _trainer.GetProfile().challengeTargetScore : 0f;
 
-            uiManager?.ShowHUD(vsAI, challengeTarget);
+            uiManager?.ShowHUD(isVsAI, isWatchAI, challengeTarget);
 
-            Debug.Log($"[GameManager] Game started — Mode:{mode} Seed:{levelSeed}");
+            Debug.Log($"[GameManager] Started — Mode:{mode} Seed:{levelSeed}");
         }
 
         public void RestartGame()
@@ -169,10 +190,9 @@ namespace DoodleClimb.Game
         // ── Score tracking ────────────────────────────────────────────────────────
         private void UpdateScores()
         {
-            if (playerSpawnPoint == null) return;
-            float spawnY = playerSpawnPoint.position.y;
+            float spawnY = playerSpawnPoint != null ? playerSpawnPoint.position.y : 0f;
 
-            if (player != null && player.IsAlive)
+            if (player != null && player.IsAlive && player.gameObject.activeSelf)
             {
                 float h = player.CurrentHeight;
                 if (h > _playerMaxY)
@@ -199,33 +219,32 @@ namespace DoodleClimb.Game
             if (cameraFollow == null) return;
             float deathLine = cameraFollow.BottomY - deathYOffset;
 
-            if (player != null && player.IsAlive &&
-                player.transform.position.y < deathLine)
+            bool isWatchAI = _modeManager != null && _modeManager.IsWatchAI;
+
+            // In Watch AI mode the player is disabled — skip its death check
+            if (!isWatchAI && player != null && player.IsAlive
+                && player.transform.position.y < deathLine)
                 player.Die();
 
-            if (aiPlayer != null && aiPlayer.IsAlive &&
-                aiPlayer.transform.position.y < deathLine)
+            if (aiPlayer != null && aiPlayer.IsAlive
+                && aiPlayer.transform.position.y < deathLine)
                 aiPlayer.Die();
         }
 
         // ── Death callbacks ───────────────────────────────────────────────────────
         private void OnPlayerDied()
         {
-            if (!_gameRunning) return; // guard against double-fire
+            if (!_gameRunning) return;
             _gameRunning = false;
 
-            bool vsAI  = _modeManager != null &&
-                         _modeManager.CurrentMode == GameModeManager.GameMode.VsAI;
+            bool vsAI  = _modeManager != null && _modeManager.IsVsAI;
             bool aiWon = vsAI && aiPlayer != null && aiPlayer.IsAlive;
 
-            // Stop recording FIRST so the last jump outcome is resolved as a Fall
             _recorder?.StopRecording(_playerScore);
 
-            // Train the profile from this run
             if (_trainer != null)
                 _trainer.TrainFromLatestRun(_playerScore, aiWon);
 
-            // Refresh Platform Personality for next run
             if (_trainer != null && _trainer.IsProfileReady && platformSpawner != null)
                 platformSpawner.ApplySkillProfile(_trainer.GetProfile());
 
@@ -235,42 +254,51 @@ namespace DoodleClimb.Game
                 ? _trainer.GetProfile().challengeTargetScore : 0f;
 
             uiManager?.ShowGameOver(
-                _playerScore,
-                vsAI ? _aiScore : -1f,
-                winner,
-                _trainer != null && _trainer.IsProfileReady,
-                challengeTarget
-            );
+                playerScore:    _playerScore,
+                aiScore:        vsAI ? _aiScore : -1f,
+                winner:         winner,
+                aiHasTrained:   _trainer != null && _trainer.IsProfileReady,
+                challengeTarget: challengeTarget,
+                isWatchAI:      false);
 
-            Debug.Log($"[GameManager] Player died. " +
-                      $"Score:{_playerScore:0}  AI:{_aiScore:0}  Winner:{winner}");
+            Debug.Log($"[GameManager] Player died. Score:{_playerScore:0} " +
+                      $"AI:{_aiScore:0} Winner:{winner}");
         }
 
         private void OnAIDied()
         {
-            // AI dying on its own does not end the run — player keeps climbing
-            Debug.Log($"[GameManager] AI died at score {_aiScore:0}.");
+            bool isWatchAI = _modeManager != null && _modeManager.IsWatchAI;
+
+            if (isWatchAI && _gameRunning)
+            {
+                // Watch AI mode — AI falling ends the run
+                _gameRunning = false;
+
+                uiManager?.ShowGameOver(
+                    playerScore:    _aiScore,   // AI's score is the headline number
+                    aiScore:        -1f,
+                    winner:         "",
+                    aiHasTrained:   false,
+                    challengeTarget: 0f,
+                    isWatchAI:      true);
+
+                Debug.Log($"[GameManager] AI died in Watch mode. AI Score:{_aiScore:0}");
+                return;
+            }
+
+            // vs-AI mode — AI dying doesn't end the run; player keeps climbing
+            Debug.Log($"[GameManager] AI died in vs-AI mode at score {_aiScore:0}.");
         }
 
         // ── Bridge: PlayerController → AIRecorder ─────────────────────────────────
-
-        /// <summary>
-        /// Called by PlayerController on each jump so the AIRecorder can capture
-        /// both player state and the current platform layout together.
-        /// </summary>
         public void NotifyPlayerJumped(
             float x, float y, float vx, float jumpDelay, string platformType)
         {
             if (_recorder == null || platformSpawner == null) return;
-
             var nextPlatforms = platformSpawner.GetPlatformsAbove(y, 3);
             _recorder.RecordJump(x, y, vx, jumpDelay, platformType, nextPlatforms);
         }
 
-        /// <summary>
-        /// Called by PlayerController on each successful landing so the recorder
-        /// can measure landing accuracy retroactively.
-        /// </summary>
         public void NotifyPlayerLanded(float playerX, float platformCentreX)
         {
             _recorder?.RecordLanding(playerX, platformCentreX);
