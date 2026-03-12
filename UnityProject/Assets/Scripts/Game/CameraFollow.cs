@@ -28,9 +28,19 @@ namespace DoodleClimb.Game
         public float minCameraY = 0f;
 
         // ── Internal ──────────────────────────────────────────────────────────────
-        private float _highestReachedY;
+        private float  _highestReachedY;
+        private Camera _cam;               // cached — Camera.main is a FindObject call
 
         // ── Unity lifecycle ───────────────────────────────────────────────────────
+        private void Awake()
+        {
+            _cam = GetComponent<Camera>();
+            if (_cam == null) _cam = Camera.main;
+            if (_cam == null)
+                Debug.LogWarning("[CameraFollow] No Camera found. " +
+                                 "TopY / BottomY will return 0.");
+        }
+
         private void LateUpdate()
         {
             float targetY = GetTargetY();
@@ -77,9 +87,11 @@ namespace DoodleClimb.Game
         }
 
         /// <summary>Top of the visible area in world space.</summary>
-        public float TopY => transform.position.y + Camera.main.orthographicSize;
+        public float TopY => transform.position.y +
+            (_cam != null ? _cam.orthographicSize : 0f);
 
         /// <summary>Bottom of the visible area in world space.</summary>
-        public float BottomY => transform.position.y - Camera.main.orthographicSize;
+        public float BottomY => transform.position.y -
+            (_cam != null ? _cam.orthographicSize : 0f);
     }
 }

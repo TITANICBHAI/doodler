@@ -71,8 +71,16 @@ namespace DoodleClimb.Player
 
         private void Start()
         {
-            _halfScreenWidth = Camera.main.orthographicSize * Camera.main.aspect;
-            _lastLandTime    = Time.time;
+            Camera cam = Camera.main;
+            if (cam != null)
+                _halfScreenWidth = cam.orthographicSize * cam.aspect;
+            else
+            {
+                _halfScreenWidth = 5f; // safe fallback — one screen-width on a 1080p 2D view
+                Debug.LogWarning("[PlayerController] Camera.main is null in Start(). " +
+                                 "Using default half-screen width 5.");
+            }
+            _lastLandTime = Time.time;
         }
 
         private void Update()
