@@ -5,17 +5,21 @@ using UnityEngine;
 namespace DoodleClimb.AI
 {
     /// <summary>
-    /// Controls the AI clone character using a hybrid of two systems:
+    /// Controls the AI clone character using two complementary systems:
     ///
-    ///   System A - Ghost Replay (if a best-run exists):
-    ///     Plays back the exact positions and jumps from the player's best run.
-    ///     Feels naturally human because it IS the player.
+    ///   System A — Ghost Replay (when a best-run exists):
+    ///     Plays back the player's best-run position timeline.
+    ///     Naturally human because the data IS the player.
     ///
-    ///   System B - Behaviour AI (statistical profile):
-    ///     Looks at the next 3 platforms, moves toward them, jumps with learned
-    ///     timing, and adds small random noise to feel alive.
+    ///   System B — Behaviour AI (statistical profile):
+    ///     Looks ahead at the next 3 platforms, selects the best reachable one,
+    ///     moves toward it with smooth lerp, applies learned jump timing and noise.
+    ///     Falls back to the screen centre if no platforms are found.
     ///
-    /// The active system is determined by GameModeManager / can be toggled at runtime.
+    /// Platform reachability:
+    ///     A platform is considered reachable if it's within the playfield width.
+    ///     If the nearest platform is too far horizontally, the AI skips to the next.
+    ///     Movement speed matches the trained player profile exactly.
     /// </summary>
     [RequireComponent(typeof(Rigidbody2D))]
     public class AIPlayerController : MonoBehaviour
@@ -27,12 +31,11 @@ namespace DoodleClimb.AI
         [Header("AI Mode")]
         public AIMode aiMode = AIMode.Hybrid;
 
-        [Header("Profile Overrides (leave 0 to use trained profile)")]
+        [Header("Profile Overrides (0 = use trained value)")]
         public float overrideMoveSpeed = 0f;
         public float overrideJumpDelay = 0f;
 
-        [Header("Randomness")]
-        [Tooltip("Small noise added to movements to simulate human imprecision.")]
+        [Header("Randomness — human imprecision simulation")]
         [Range(0f, 1f)]
         public float noiseAmount = 0.15f;
 
@@ -40,23 +43,32 @@ namespace DoodleClimb.AI
         public float jumpForce = 18f;
         public float fallGravityMultiplier = 2.5f;
 
+        [Header("Platform Targeting")]
+        [Tooltip("Maximum horizontal distance to a platform before it's skipped.")]
+        public float maxReachableHorizontalDist = 7f;
+
+        [Tooltip("Smoothing speed for horizontal movement target.")]
+        [Range(1f, 15f)]
+        public float targetSmoothSpeed = 6f;
+
         // ── References ────────────────────────────────────────────────────────────
-        private AIProfile                    _profile;
-        private AIRecorder                   _recorder;
-        private Platforms.PlatformSpawner    _spawner;
-        private Rigidbody2D                  _rb;
+        private AIProfile                 _profile;
+        private AIRecorder                _recorder;
+        private Platforms.PlatformSpawner _spawner;
+        private Rigidbody2D               _rb;
 
         // ── Behaviour-AI state ────────────────────────────────────────────────────
-        private float _targetX;
+        private float _targetX;         // smoothed target; AI lerps toward this
+        private float _rawTargetX;      // unsmoothed desired X before lerp
         private float _lastLandTime;
         private bool  _wantsToJump;
         private bool  _isAlive;
 
         // ── Ghost-replay state ────────────────────────────────────────────────────
         private List<GhostFrame> _ghostFrames;
-        private int              _ghostIndex      = 0;
+        private int              _ghostIndex;
         private float            _replayStartTime;
-        private bool             _ghostActive     = false;
+        private bool             _ghostActive;
 
         // ── Moving platform detection ─────────────────────────────────────────────
         private bool  _movingPlatformNearby;
@@ -89,7 +101,6 @@ namespace DoodleClimb.AI
         {
             if (!_isAlive) return;
 
-            // Only apply behaviour movement when not ghost-driven
             if (!_ghostActive || aiMode == AIMode.BehaviourProfile)
                 ApplyBehaviourMovement();
 
@@ -107,6 +118,8 @@ namespace DoodleClimb.AI
             _isAlive      = true;
             _lastLandTime = Time.time;
             _wantsToJump  = false;
+            _targetX      = 0f;
+            _rawTargetX   = 0f;
 
             if (useGhost && _recorder != null && _recorder.HasBestRun)
             {
@@ -114,12 +127,12 @@ namespace DoodleClimb.AI
                 _ghostIndex      = 0;
                 _replayStartTime = Time.time;
                 _ghostActive     = true;
-                Debug.Log($"[AIPlayerController] Ghost replay active. Frames: {_ghostFrames.Count}");
+                Debug.Log($"[AIPlayerController] Ghost replay: {_ghostFrames.Count} frames.");
             }
             else
             {
                 _ghostActive = false;
-                Debug.Log("[AIPlayerController] Behaviour-AI mode active.");
+                Debug.Log("[AIPlayerController] Behaviour-AI active.");
             }
         }
 
@@ -128,43 +141,38 @@ namespace DoodleClimb.AI
         {
             if (_ghostFrames == null || _ghostIndex >= _ghostFrames.Count)
             {
-                // Ghost run ended — fall back to behaviour AI for the rest of the run
+                // Ghost exhausted — fall back to behaviour AI for the rest of the run
                 _ghostActive = false;
                 return;
             }
 
-            float replayTime = Time.time - _replayStartTime;
+            float elapsed = Time.time - _replayStartTime;
 
-            // Advance ghost index to keep up with elapsed replay time
+            // Seek forward in the timeline to match elapsed time
             while (_ghostIndex < _ghostFrames.Count - 1 &&
-                   _ghostFrames[_ghostIndex + 1].time <= replayTime)
-            {
+                   _ghostFrames[_ghostIndex + 1].time <= elapsed)
                 _ghostIndex++;
-            }
 
-            GhostFrame current = _ghostFrames[_ghostIndex];
+            GhostFrame frame = _ghostFrames[_ghostIndex];
 
             if (aiMode == AIMode.Hybrid)
             {
-                // Hybrid: drive velocity toward ghost x-position while keeping
-                // physics-based y-velocity (so jumps still feel physical)
+                // Hybrid: drive X velocity toward ghost X while keeping physics Y
                 _rb.velocity = new Vector2(
-                    (current.x - transform.position.x) / Time.fixedDeltaTime,
-                    _rb.velocity.y
-                );
+                    (frame.x - transform.position.x) / Time.fixedDeltaTime,
+                    _rb.velocity.y);
             }
             else
             {
-                // Pure replay: directly lerp to exact ghost position
+                // Pure replay: lerp directly to ghost position
                 transform.position = Vector3.Lerp(
                     transform.position,
-                    new Vector3(current.x, current.y, 0f),
-                    20f * Time.deltaTime
-                );
+                    new Vector3(frame.x, frame.y, 0f),
+                    20f * Time.deltaTime);
             }
 
-            // Fire jump at the same moment it occurred in the recorded run
-            if (current.jumpEvent &&
+            // Fire jump at the same frame the player did
+            if (frame.jumpEvent &&
                 _ghostIndex > 0 &&
                 !_ghostFrames[_ghostIndex - 1].jumpEvent)
             {
@@ -175,16 +183,34 @@ namespace DoodleClimb.AI
         // ── Behaviour AI ──────────────────────────────────────────────────────────
         private void UpdateBehaviourAI()
         {
-            if (_profile == null || _spawner == null) return;
+            if (_profile == null || _spawner == null)
+            {
+                // No profile / spawner — drift toward centre so AI doesn't get stuck
+                _rawTargetX = 0f;
+                _targetX    = Mathf.Lerp(_targetX, _rawTargetX, Time.deltaTime * targetSmoothSpeed);
+                return;
+            }
 
             List<Platforms.Platform> upcoming =
                 _spawner.GetPlatformsAbove(transform.position.y, 3);
 
-            if (upcoming.Count == 0) return;
+            if (upcoming.Count == 0)
+            {
+                // No platforms found above — move to screen centre as fallback
+                _rawTargetX = 0f;
+                _targetX    = Mathf.Lerp(_targetX, _rawTargetX, Time.deltaTime * targetSmoothSpeed);
+                return;
+            }
 
-            Platforms.Platform target = upcoming[0];
+            // Pick the best reachable platform from the list
+            Platforms.Platform target = FindBestReachablePlatform(upcoming);
 
-            if (target.Type == Platforms.Platform.PlatformType.Moving)
+            if (target == null)
+            {
+                // All platforms are too far — use centre fallback
+                _rawTargetX = 0f;
+            }
+            else if (target.Type == Platforms.Platform.PlatformType.Moving)
             {
                 if (!_movingPlatformNearby)
                 {
@@ -195,37 +221,74 @@ namespace DoodleClimb.AI
                 float reactionTime = _profile.reactionTime
                     + Random.Range(-noiseAmount * 0.2f, noiseAmount * 0.2f);
 
-                // Only correct for moving platform after the learned reaction delay
+                // Only correct for moving platform after learned reaction delay
                 if (Time.time - _movingPlatformDetectedTime > reactionTime)
-                    _targetX = PredictMovingPlatformX(target);
+                    _rawTargetX = PredictMovingPlatformX(target);
+                // else keep current _rawTargetX (don't correct yet)
             }
             else
             {
                 _movingPlatformNearby = false;
-                // Add small noise so AI doesn't move perfectly to centre every time
-                _targetX = target.transform.position.x
-                           + Random.Range(-noiseAmount, noiseAmount);
+                // Add small noise to avoid perfectly centred movement every time
+                _rawTargetX = target.transform.position.x
+                              + Random.Range(-noiseAmount, noiseAmount);
             }
 
-            // Blend in direction bias so AI leans the same way the player did
-            _targetX += _profile.directionBias * noiseAmount;
+            // Blend in the player's directional tendency
+            _rawTargetX += _profile.directionBias * noiseAmount;
+
+            // Smooth the target so the AI doesn't snap direction instantly
+            _targetX = Mathf.Lerp(_targetX, _rawTargetX, Time.deltaTime * targetSmoothSpeed);
+        }
+
+        /// <summary>
+        /// Scans upcoming platforms and returns the best reachable one.
+        /// Skips platforms that are too far horizontally (AI would miss).
+        /// Falls back to the nearest platform if all are technically far (screen wrap).
+        /// </summary>
+        private Platforms.Platform FindBestReachablePlatform(
+            List<Platforms.Platform> candidates)
+        {
+            // First pass: prefer a platform within maxReachableHorizontalDist
+            foreach (Platforms.Platform p in candidates)
+            {
+                float hDist = Mathf.Abs(p.transform.position.x - transform.position.x);
+                if (hDist <= maxReachableHorizontalDist)
+                    return p;
+            }
+
+            // Second pass: all platforms are far — return the closest horizontally
+            // (screen-wrap means the AI can always reach any platform eventually)
+            Platforms.Platform best = null;
+            float bestDist = float.MaxValue;
+            foreach (Platforms.Platform p in candidates)
+            {
+                float hDist = Mathf.Abs(p.transform.position.x - transform.position.x);
+                if (hDist < bestDist)
+                {
+                    bestDist = hDist;
+                    best     = p;
+                }
+            }
+            return best;
         }
 
         private void ApplyBehaviourMovement()
         {
             if (_profile == null) return;
 
+            // Use trained speed — exactly matching how fast the player moved
             float speed = overrideMoveSpeed > 0f ? overrideMoveSpeed : _profile.avgMoveSpeed;
-            float dir   = Mathf.Sign(_targetX - transform.position.x);
-            float noise = Random.Range(-noiseAmount, noiseAmount) * 0.3f;
+            float diff  = _targetX - transform.position.x;
+            float dir   = Mathf.Abs(diff) < 0.05f ? 0f : Mathf.Sign(diff);
+            float noise = Random.Range(-noiseAmount, noiseAmount) * 0.25f;
 
             _rb.velocity = new Vector2(
                 dir * speed * (1f + noise),
-                _rb.velocity.y
-            );
+                _rb.velocity.y);
         }
 
-        // ── Predict moving platform position at time of arrival ───────────────────
+        // ── Predict moving platform position at arrival time ──────────────────────
         private float PredictMovingPlatformX(Platforms.Platform p)
         {
             float vy         = Mathf.Abs(_rb.velocity.y);
@@ -237,7 +300,8 @@ namespace DoodleClimb.AI
         // ── Platform landing callback (called by Platform.cs) ─────────────────────
         public void OnLandedOnPlatform(string platformType, bool isMovingPlatform)
         {
-            _lastLandTime = Time.time;
+            _lastLandTime         = Time.time;
+            _movingPlatformNearby = false;
 
             float delay = overrideJumpDelay > 0f
                 ? overrideJumpDelay
@@ -283,6 +347,8 @@ namespace DoodleClimb.AI
             _rb.bodyType       = RigidbodyType2D.Dynamic;
             _rb.velocity       = Vector2.zero;
             _isAlive           = true;
+            _targetX           = position.x;
+            _rawTargetX        = position.x;
         }
 
         // ── Public getters ────────────────────────────────────────────────────────

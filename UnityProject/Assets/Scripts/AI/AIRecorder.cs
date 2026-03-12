@@ -10,48 +10,48 @@ namespace DoodleClimb.AI
     {
         SuccessfulLanding,
         MissedJump,   // player jumped but landed on nothing and kept falling
-        Fall          // player fell off the screen entirely
+        Fall          // player fell off the bottom of the screen
     }
 
     /// <summary>
-    /// Snapshot of the player's behaviour AND the surrounding environment at
-    /// the moment of a jump.  Storing both together lets the AI understand
-    /// context ("I was close to a moving platform and jumped early") rather than
+    /// Snapshot of the player's behaviour AND surrounding environment at the
+    /// moment of a jump.  Storing both together lets the AI understand context
+    /// (e.g. "I was close to a moving platform and jumped early") rather than
     /// just copying raw actions.
     /// </summary>
     [System.Serializable]
     public class PlayerActionData
     {
-        // ── Player state ──────────────────────────────────────────────────────────
-        public float time;
-        public float playerX;
-        public float playerY;
-        public float velocityX;
-        public float velocityY;
-        public float jumpDelay;          // seconds between landing and next jump
-        public string platformType;      // type of platform the player just left
+        // Player state
+        public float  time;
+        public float  playerX;
+        public float  playerY;
+        public float  velocityX;
+        public float  velocityY;
+        public float  jumpDelay;       // seconds between landing and this jump
+        public string platformType;    // type of platform just left
 
-        // ── Environment state (next 3 platforms at time of jump) ─────────────────
-        public float nextPlatform1X;
-        public float nextPlatform1Y;
+        // Environment state — next 3 platforms at time of jump
+        public float  nextPlatform1X;
+        public float  nextPlatform1Y;
         public string nextPlatform1Type;
-        public float nextPlatform1Speed; // horizontal speed (0 if not moving)
+        public float  nextPlatform1Speed; // horizontal speed (0 if not moving)
 
-        public float nextPlatform2X;
-        public float nextPlatform2Y;
+        public float  nextPlatform2X;
+        public float  nextPlatform2Y;
         public string nextPlatform2Type;
 
-        public float nextPlatform3X;
-        public float nextPlatform3Y;
+        public float  nextPlatform3X;
+        public float  nextPlatform3Y;
         public string nextPlatform3Type;
 
-        // ── Outcome ───────────────────────────────────────────────────────────────
-        public JumpOutcome outcome;      // filled in after the jump resolves
-        public float distanceToPlatform; // distance to next platform at jump time
-        public float landingError;       // |playerX - platform.x| on landing (0 = perfect)
+        // Outcome — filled in after the jump resolves
+        public JumpOutcome outcome;
+        public float       distanceToPlatform; // distance to next platform at jump time
+        public float       landingError;       // |playerX - platform.x| on landing
     }
 
-    /// <summary>A single timestamped frame captured for ghost replay.</summary>
+    /// <summary>A single timestamped position frame captured for ghost replay.</summary>
     [System.Serializable]
     public class GhostFrame
     {
@@ -59,118 +59,109 @@ namespace DoodleClimb.AI
         public float x;
         public float y;
         public float velocityX;
-        public bool jumpEvent;
+        public bool  jumpEvent;
     }
 
     /// <summary>
-    /// Records the human player's gameplay in two ways:
+    /// Records the human player's gameplay in two parallel streams:
     ///
-    ///   1. Behaviour + environment samples
-    ///      Records player state, surrounding platform layout, and jump outcomes.
-    ///      Fed to AITrainer to build a statistical AIProfile.
+    ///   1. Action samples (jump + environment + outcome)
+    ///      Fed to AITrainer to build a statistical AIProfile that grows smarter
+    ///      across runs.
     ///
-    ///   2. Ghost frames (full position/velocity timeline)
-    ///      Used for exact ghost replay by AIPlayerController.
+    ///   2. Ghost frames (position / velocity timeline, sampled every 0.2 s)
+    ///      Used by AIPlayerController for exact ghost replay in vs-AI mode.
     ///
-    /// Both buffers are capped at 2,000 entries to stay mobile-friendly.
-    /// Outcomes are filled in retroactively after each jump resolves.
+    /// Both buffers are capped to stay mobile-friendly.
+    /// Jump outcomes are written retroactively — on the next landing or on death.
     /// </summary>
     public class AIRecorder : MonoBehaviour
     {
         // ── Inspector ─────────────────────────────────────────────────────────────
-        [Header("Limits")]
-        [Tooltip("Maximum action entries kept in memory.")]
+        [Header("Buffer Limits")]
+        [Tooltip("Maximum action entries kept in the rolling history.")]
         public int maxActionEntries = 2000;
 
-        [Tooltip("Maximum ghost frames kept per run.")]
+        [Tooltip("Maximum ghost frames stored per run.")]
         public int maxGhostFrames = 2000;
 
-        [Tooltip("Minimum seconds between frame samples (performance throttle).")]
-        public float frameSampleInterval = 0.05f;
+        [Header("Performance")]
+        [Tooltip("Seconds between ghost frame samples. 0.2 s = 5 samples/sec (mobile-friendly).")]
+        public float frameSampleInterval = 0.2f;
 
         // ── Internal state ────────────────────────────────────────────────────────
-        private List<PlayerActionData> _actionHistory = new List<PlayerActionData>();
-        private List<GhostFrame> _currentGhostFrames = new List<GhostFrame>();
+        private List<PlayerActionData> _actionHistory    = new List<PlayerActionData>();
+        private List<GhostFrame>       _currentRun       = new List<GhostFrame>();
+        private List<GhostFrame>       _bestRunGhost     = new List<GhostFrame>();
+        private float                  _bestRunScore     = 0f;
 
-        // Stores the best run ghost (highest score achieved)
-        private List<GhostFrame> _bestRunGhostFrames = new List<GhostFrame>();
-        private float _bestRunScore = 0f;
-
-        private float _lastFrameSampleTime;
-        private bool _isRecording = false;
+        private float _lastSampleTime;
+        private bool  _isRecording;
         private float _runStartTime;
+        private float _latestReactionTime;
 
-        // Latest reaction time for the trainer
-        private float _latestReactionTime = 0f;
-
-        // The last recorded jump — we fill in the outcome retroactively
-        private PlayerActionData _pendingJump = null;
+        // Last jump waiting for its outcome to be resolved
+        private PlayerActionData _pendingJump;
 
         // ── Public API ────────────────────────────────────────────────────────────
         public void StartRecording()
         {
-            _currentGhostFrames.Clear();
-            _pendingJump = null;
-            _runStartTime = Time.time;
-            _lastFrameSampleTime = 0f;
-            _isRecording = true;
+            _currentRun.Clear();
+            _pendingJump     = null;
+            _runStartTime    = Time.time;
+            _lastSampleTime  = 0f;
+            _isRecording     = true;
             Debug.Log("[AIRecorder] Recording started.");
         }
 
         public void StopRecording(float runScore)
         {
+            if (!_isRecording) return;
             _isRecording = false;
 
-            // If there's still an unresolved jump, mark it as a fall
+            // Any unresolved jump at death is a Fall
             if (_pendingJump != null)
             {
                 _pendingJump.outcome = JumpOutcome.Fall;
                 _pendingJump = null;
             }
 
-            // Keep the best run for ghost replay
-            if (runScore > _bestRunScore)
+            // Promote this run to best-run ghost if it scored higher
+            if (runScore > _bestRunScore && _currentRun.Count > 0)
             {
                 _bestRunScore = runScore;
-                _bestRunGhostFrames = new List<GhostFrame>(_currentGhostFrames);
-                Debug.Log($"[AIRecorder] New best run saved. Score: {runScore}. " +
-                          $"Frames: {_bestRunGhostFrames.Count}");
+                _bestRunGhost = new List<GhostFrame>(_currentRun);
+                Debug.Log($"[AIRecorder] New best run: score={runScore:0}  " +
+                          $"frames={_bestRunGhost.Count}");
             }
 
-            Debug.Log($"[AIRecorder] Recording stopped. " +
-                      $"Action history: {_actionHistory.Count} entries.");
+            Debug.Log($"[AIRecorder] Stopped. Action history: {_actionHistory.Count}");
         }
 
-        // ── Called every physics frame (by PlayerController) ─────────────────────
+        // ── Frame sampling (called by PlayerController.RecordFrame) ───────────────
         public void RecordFrame(float x, float y, float vx, float vy)
         {
             if (!_isRecording) return;
 
-            float now = Time.time - _runStartTime;
-            if (now - _lastFrameSampleTime < frameSampleInterval) return;
-            _lastFrameSampleTime = now;
+            float elapsed = Time.time - _runStartTime;
+            if (elapsed - _lastSampleTime < frameSampleInterval) return;
+            _lastSampleTime = elapsed;
 
-            GhostFrame gf = new GhostFrame
+            _currentRun.Add(new GhostFrame
             {
-                time  = now,
-                x     = x,
-                y     = y,
+                time      = elapsed,
+                x         = x,
+                y         = y,
                 velocityX = vx,
                 jumpEvent = false
-            };
+            });
 
-            _currentGhostFrames.Add(gf);
-
-            // Trim oldest frames if over limit
-            if (_currentGhostFrames.Count > maxGhostFrames)
-                _currentGhostFrames.RemoveAt(0);
+            // Rolling cap — remove oldest entry
+            if (_currentRun.Count > maxGhostFrames)
+                _currentRun.RemoveAt(0);
         }
 
-        // ── Called on each jump (by PlayerController) ─────────────────────────────
-        /// <summary>
-        /// Records a jump event, including the state of the next 3 platforms visible
-        /// at the time of the jump (passed in from PlatformSpawner via GameManager).
-        /// </summary>
+        // ── Jump recording (called via GameManager from PlayerController) ─────────
         public void RecordJump(
             float x, float y,
             float velocityX, float jumpDelay,
@@ -179,11 +170,11 @@ namespace DoodleClimb.AI
         {
             if (!_isRecording) return;
 
-            // Mark jump event on the last ghost frame
-            if (_currentGhostFrames.Count > 0)
-                _currentGhostFrames[_currentGhostFrames.Count - 1].jumpEvent = true;
+            // Tag the last ghost frame with a jump event
+            if (_currentRun.Count > 0)
+                _currentRun[_currentRun.Count - 1].jumpEvent = true;
 
-            // Resolve any still-pending jump as a missed jump (no landing between jumps)
+            // Previous unresolved jump with no landing between them = missed
             if (_pendingJump != null)
             {
                 _pendingJump.outcome = JumpOutcome.MissedJump;
@@ -199,23 +190,22 @@ namespace DoodleClimb.AI
                 velocityY    = 0f,
                 jumpDelay    = jumpDelay,
                 platformType = platformType,
-                outcome      = JumpOutcome.MissedJump // default; overwritten on landing
+                outcome      = JumpOutcome.MissedJump // overwritten on landing
             };
 
-            // Fill in next-platform environment state
+            // Fill environment state from the next 3 platforms
             if (nextPlatforms != null)
             {
                 if (nextPlatforms.Count > 0)
                 {
                     var p1 = nextPlatforms[0];
-                    entry.nextPlatform1X    = p1.transform.position.x;
-                    entry.nextPlatform1Y    = p1.transform.position.y;
-                    entry.nextPlatform1Type = p1.Type.ToString();
+                    entry.nextPlatform1X     = p1.transform.position.x;
+                    entry.nextPlatform1Y     = p1.transform.position.y;
+                    entry.nextPlatform1Type  = p1.Type.ToString();
                     entry.nextPlatform1Speed = p1.HorizontalVelocity;
                     entry.distanceToPlatform = Vector2.Distance(
                         new Vector2(x, y),
-                        new Vector2(p1.transform.position.x, p1.transform.position.y)
-                    );
+                        new Vector2(p1.transform.position.x, p1.transform.position.y));
                 }
                 if (nextPlatforms.Count > 1)
                 {
@@ -236,49 +226,42 @@ namespace DoodleClimb.AI
             _actionHistory.Add(entry);
             _pendingJump = entry;
 
-            // Rolling window — drop oldest if over limit
             if (_actionHistory.Count > maxActionEntries)
                 _actionHistory.RemoveAt(0);
         }
 
-        // ── Called when the player successfully lands (by PlayerController) ────────
-        /// <summary>
-        /// Resolves the pending jump as a SuccessfulLanding and records landing error
-        /// (how far horizontally from the platform centre the player actually landed).
-        /// </summary>
+        // ── Landing resolution (called via GameManager from PlayerController) ─────
         public void RecordLanding(float playerX, float platformCentreX)
         {
             if (_pendingJump == null) return;
-
             _pendingJump.outcome      = JumpOutcome.SuccessfulLanding;
             _pendingJump.landingError = Mathf.Abs(playerX - platformCentreX);
             _pendingJump = null;
         }
 
-        // ── Called when we measure a platform reaction time ───────────────────────
+        // ── Reaction time (called by PlayerController) ────────────────────────────
         public void RecordReactionTime(float reactionTime)
         {
             _latestReactionTime = reactionTime;
         }
 
-        // ── Getters (for AITrainer) ───────────────────────────────────────────────
-        public List<PlayerActionData> GetActionHistory() => _actionHistory;
-        public List<GhostFrame> GetBestRunFrames()       => _bestRunGhostFrames;
-        public float LatestReactionTime                  => _latestReactionTime;
-        public bool  HasBestRun                          => _bestRunGhostFrames.Count > 0;
-        public float BestRunScore                        => _bestRunScore;
-
-        /// <summary>
-        /// Clears ALL recorded data (use when player wants a completely fresh AI).
-        /// </summary>
+        // ── Full reset ────────────────────────────────────────────────────────────
         public void ClearAll()
         {
             _actionHistory.Clear();
-            _currentGhostFrames.Clear();
-            _bestRunGhostFrames.Clear();
-            _bestRunScore = 0f;
-            _pendingJump  = null;
+            _currentRun.Clear();
+            _bestRunGhost.Clear();
+            _bestRunScore    = 0f;
+            _pendingJump     = null;
+            _isRecording     = false;
             Debug.Log("[AIRecorder] All data cleared.");
         }
+
+        // ── Getters ───────────────────────────────────────────────────────────────
+        public List<PlayerActionData> GetActionHistory()  => _actionHistory;
+        public List<GhostFrame>       GetBestRunFrames()  => _bestRunGhost;
+        public float                  LatestReactionTime  => _latestReactionTime;
+        public bool                   HasBestRun          => _bestRunGhost.Count > 0;
+        public float                  BestRunScore        => _bestRunScore;
     }
 }

@@ -6,145 +6,169 @@ namespace DoodleClimb.Platforms
     /// <summary>
     /// Procedurally spawns and recycles platforms as the player climbs.
     ///
+    /// Object pooling:
+    ///   Platforms are never Destroyed — they're disabled and returned to a pool
+    ///   queue.  The pool auto-expands when all platforms are in use.
+    ///
     /// Difficulty scales in two ways:
-    ///   1. Height-based  — gaps grow, widths shrink, harder types unlock as height rises.
-    ///   2. Skill-based (Platform Personality System) — once enough runs have been recorded,
-    ///      the spawner reads the player's AIProfile and adjusts:
-    ///        • High riskLevel  → more breakable/temporary platforms
-    ///        • High precision  → platforms are narrower (the player can handle it)
-    ///        • Low smoothness  → more moving platforms to punish erratic movement
-    ///      This keeps the game feeling fresh even for expert players.
+    ///   1. Height-based  — gaps grow, widths shrink, harder types unlock over time.
+    ///   2. Skill-based (Platform Personality System) — once enough runs have been
+    ///      recorded the spawner reads the player's AIProfile and adjusts difficulty
+    ///      to match their specific weaknesses and strengths.
+    ///
+    /// Performance:
+    ///   GetPlatformsAbove() iterates _activePlatforms in insertion order (already
+    ///   bottom-to-top) and returns early — no sort needed every frame.
+    ///   All component references are cached in Awake/Start.
     /// </summary>
     public class PlatformSpawner : MonoBehaviour
     {
         // ── Inspector ─────────────────────────────────────────────────────────────
-        [Header("Prefabs")]
+        [Header("Prefab")]
         public GameObject platformPrefab;
 
         [Header("Spawn Settings")]
-        [Tooltip("Number of platforms to keep active at once.")]
-        public int platformPoolSize = 20;
+        [Tooltip("Initial pool size — expands automatically if needed.")]
+        public int platformPoolSize = 24;
 
-        [Tooltip("Vertical gap range between platforms (min, max).")]
+        [Tooltip("Vertical gap range between consecutive platforms (units).")]
         public Vector2 verticalGapRange = new Vector2(1.5f, 2.8f);
 
-        [Tooltip("Vertical gap increase per 100 units of height.")]
+        [Tooltip("Gap increase per 100 units of player height.")]
         public float gapScalePerHeight = 0.002f;
 
         [Header("Platform Width")]
-        public float startPlatformWidth = 2.2f;
-        public float minPlatformWidth   = 0.9f;
+        public float startPlatformWidth    = 2.2f;
+        public float minPlatformWidth      = 0.9f;
         [Tooltip("Width reduction per 100 units of height.")]
         public float widthReductionPerHeight = 0.03f;
 
-        [Header("Height Thresholds for special platform types")]
-        public float movingStartHeight    = 40f;
-        public float breakableStartHeight = 80f;
+        [Header("Height Thresholds for Special Platform Types")]
+        public float movingStartHeight    =  40f;
+        public float breakableStartHeight =  80f;
         public float temporaryStartHeight = 130f;
 
-        [Header("Base Probabilities at max height difficulty [0-1]")]
+        [Header("Max Probabilities at Full Height Difficulty")]
         public float maxMovingChance    = 0.30f;
         public float maxBreakableChance = 0.20f;
         public float maxTemporaryChance = 0.15f;
 
         // ── Platform Personality System ───────────────────────────────────────────
-        // These are additive/multiplicative modifiers applied on top of height-based values.
-        // They are set by ApplySkillProfile() when a new AI profile is available.
-        private float _skillMovingBonus    = 0f;   // extra moving platform chance
-        private float _skillBreakableBonus = 0f;   // extra breakable chance
-        private float _skillTemporaryBonus = 0f;   // extra temporary chance
-        private float _skillWidthPenalty   = 0f;   // extra width reduction (harder landing zones)
+        // Additive modifiers set by ApplySkillProfile() after training.
+        private float _skillMovingBonus    = 0f;
+        private float _skillBreakableBonus = 0f;
+        private float _skillTemporaryBonus = 0f;
+        private float _skillWidthPenalty   = 0f;
 
         // ── Internal state ────────────────────────────────────────────────────────
-        private List<Platform> _activePlatforms = new List<Platform>();
-        private Queue<Platform> _pool           = new Queue<Platform>();
-        private float _nextSpawnY;
-        private float _halfScreenWidth;
+        // _activePlatforms is maintained in insertion order (bottom → top)
+        // so GetPlatformsAbove() never needs to sort.
+        private readonly List<Platform>  _activePlatforms = new List<Platform>();
+        private readonly Queue<Platform> _pool            = new Queue<Platform>();
 
-        // ── Seed / shared level generation ────────────────────────────────────────
-        private int           _levelSeed;
+        private float         _nextSpawnY;
+        private float         _halfScreenWidth;
         private System.Random _rng;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
         {
-            _halfScreenWidth = Camera.main.orthographicSize * Camera.main.aspect;
+            if (Camera.main != null)
+                _halfScreenWidth = Camera.main.orthographicSize * Camera.main.aspect;
         }
 
         private void Start()
         {
-            InitPool();
+            if (platformPrefab != null)
+                InitPool();
         }
 
         // ── Platform Personality System ───────────────────────────────────────────
         /// <summary>
-        /// Called by GameManager after training completes.
-        /// Adjusts spawn difficulty based on the player's measured skill traits.
+        /// Called by GameManager after training.
+        /// Adjusts spawn difficulty to match the player's measured skill traits.
         /// </summary>
         public void ApplySkillProfile(AI.AIProfile p)
         {
-            // High risk-taker → game rewards/punishes with more volatile platforms
+            // Risk-takers face more volatile platforms
             _skillBreakableBonus = Mathf.Lerp(0f, 0.12f, p.riskLevel);
             _skillTemporaryBonus = Mathf.Lerp(0f, 0.10f, p.riskLevel);
 
-            // Imprecise mover → add more moving platforms to punish sloppy movement
-            float imprecision = 1f - p.movementSmoothness;
-            _skillMovingBonus = Mathf.Lerp(0f, 0.15f, imprecision);
+            // Imprecise movers face more moving platforms
+            _skillMovingBonus = Mathf.Lerp(0f, 0.15f, 1f - p.movementSmoothness);
 
-            // High landing accuracy → reward with narrower platforms (player can handle it)
+            // Accurate landers face narrower platforms (fair challenge)
             _skillWidthPenalty = Mathf.Lerp(0f, 0.4f, p.landingAccuracy);
 
-            Debug.Log($"[PlatformSpawner] Skill profile applied. " +
-                      $"MovingBonus:{_skillMovingBonus:0.00} " +
-                      $"BreakBonus:{_skillBreakableBonus:0.00} " +
-                      $"TempBonus:{_skillTemporaryBonus:0.00} " +
-                      $"WidthPenalty:{_skillWidthPenalty:0.00}");
+            Debug.Log($"[PlatformSpawner] Skill profile applied — " +
+                      $"Moving+:{_skillMovingBonus:0.00} " +
+                      $"Break+:{_skillBreakableBonus:0.00} " +
+                      $"Temp+:{_skillTemporaryBonus:0.00} " +
+                      $"Width-:{_skillWidthPenalty:0.00}");
         }
 
-        // ── Initialisation ────────────────────────────────────────────────────────
+        // ── Level initialisation ──────────────────────────────────────────────────
         public void InitLevel(int seed)
         {
-            _levelSeed = seed;
-            _rng       = new System.Random(seed);
+            _rng = new System.Random(seed);
 
+            // Return all active platforms to the pool
             foreach (Platform p in _activePlatforms)
+            {
                 p.gameObject.SetActive(false);
+                _pool.Enqueue(p);
+            }
             _activePlatforms.Clear();
 
             _nextSpawnY = 0f;
 
-            // Guaranteed safe starting platform directly under the player
+            // Guaranteed safe starting platform directly beneath the player
             SpawnPlatformAt(0f, 0f, Platform.PlatformType.Static, startPlatformWidth);
             _nextSpawnY = verticalGapRange.x;
 
-            // Pre-fill the visible area
+            // Pre-fill the visible screen area
             for (int i = 0; i < platformPoolSize - 1; i++)
                 SpawnNextPlatform(0f);
         }
 
-        // ── Per-frame update (called by GameManager) ──────────────────────────────
+        // ── Per-frame update (called by GameManager.Update) ───────────────────────
         public void UpdateSpawner(float cameraTopY, float currentMaxPlayerHeight)
         {
+            // Spawn ahead of the camera top
             while (_nextSpawnY < cameraTopY + 4f)
                 SpawnNextPlatform(currentMaxPlayerHeight);
 
-            float recycleY = cameraTopY - Camera.main.orthographicSize * 2f - 3f;
-            for (int i = _activePlatforms.Count - 1; i >= 0; i--)
+            // Recycle platforms well below the camera bottom (two screen-heights below top)
+            float recycleY = cameraTopY - (Camera.main != null
+                ? Camera.main.orthographicSize * 2f + 3f
+                : 20f);
+
+            // Iterate forward (lowest platforms first) — stop once we hit active ones
+            for (int i = 0; i < _activePlatforms.Count; )
             {
-                if (_activePlatforms[i] == null || !_activePlatforms[i].gameObject.activeSelf)
+                Platform p = _activePlatforms[i];
+                if (p == null || !p.gameObject.activeSelf)
                 {
                     _activePlatforms.RemoveAt(i);
                     continue;
                 }
-                if (_activePlatforms[i].transform.position.y < recycleY)
+                if (p.transform.position.y < recycleY)
                 {
-                    RecyclePlatform(_activePlatforms[i]);
+                    p.gameObject.SetActive(false);
+                    _pool.Enqueue(p);
                     _activePlatforms.RemoveAt(i);
+                    // don't increment i — next element shifted into this index
+                }
+                else
+                {
+                    // Since list is sorted bottom-to-top, once we hit an active
+                    // platform above recycleY all remaining ones are too
+                    break;
                 }
             }
         }
 
-        // ── Spawning logic ────────────────────────────────────────────────────────
+        // ── Spawning ──────────────────────────────────────────────────────────────
         private void SpawnNextPlatform(float currentHeight)
         {
             float gapExtra = currentHeight * gapScalePerHeight;
@@ -154,56 +178,66 @@ namespace DoodleClimb.Platforms
 
             _nextSpawnY += gap;
 
-            // Width reduced by both height difficulty and skill-based penalty
+            // Width shrinks with height and with skill-based penalty
             float width = Mathf.Max(
                 minPlatformWidth,
                 startPlatformWidth
                     - currentHeight * widthReductionPerHeight
-                    - _skillWidthPenalty
-            );
+                    - _skillWidthPenalty);
 
             Platform.PlatformType type = PickPlatformType(currentHeight);
-            float x = (float)(_rng.NextDouble() * 2.0 - 1.0) * (_halfScreenWidth - width * 0.5f);
+
+            // Random X within playfield, accounting for platform half-width
+            float halfW = width * 0.5f;
+            float maxX  = Mathf.Max(0f, _halfScreenWidth - halfW);
+            float x     = (float)(_rng.NextDouble() * 2.0 - 1.0) * maxX;
 
             SpawnPlatformAt(x, _nextSpawnY, type, width);
         }
 
-        private void SpawnPlatformAt(float x, float y, Platform.PlatformType type, float width)
+        private void SpawnPlatformAt(
+            float x, float y, Platform.PlatformType type, float width)
         {
             Platform p = GetFromPool();
-            p.platformType            = type;
-            p.transform.position      = new Vector3(x, y, 0f);
-            p.transform.localScale    = new Vector3(width, p.transform.localScale.y, 1f);
+            p.platformType         = type;
+            p.transform.position   = new Vector3(x, y, 0f);
+            p.transform.localScale = new Vector3(
+                width,
+                p.transform.localScale.y,
+                1f);
             p.gameObject.SetActive(true);
-            _activePlatforms.Add(p);
+            _activePlatforms.Add(p); // appended at end = top of the sorted list
         }
 
-        // ── Difficulty / type selection ───────────────────────────────────────────
+        // ── Platform type selection ───────────────────────────────────────────────
         private Platform.PlatformType PickPlatformType(float height)
         {
             double roll = _rng.NextDouble();
 
-            // Height-based base chances
+            // Height-based probabilities (ramp up gradually from threshold)
             float movingBase = height > movingStartHeight
                 ? Mathf.Min(maxMovingChance,
-                    (height - movingStartHeight) / 200f * maxMovingChance) : 0f;
+                    (height - movingStartHeight) / 200f * maxMovingChance)
+                : 0f;
             float breakableBase = height > breakableStartHeight
                 ? Mathf.Min(maxBreakableChance,
-                    (height - breakableStartHeight) / 200f * maxBreakableChance) : 0f;
+                    (height - breakableStartHeight) / 200f * maxBreakableChance)
+                : 0f;
             float temporaryBase = height > temporaryStartHeight
                 ? Mathf.Min(maxTemporaryChance,
-                    (height - temporaryStartHeight) / 200f * maxTemporaryChance) : 0f;
+                    (height - temporaryStartHeight) / 200f * maxTemporaryChance)
+                : 0f;
 
-            // Add skill-based bonuses (Platform Personality System)
+            // Add skill-based modifiers
             float movingChance    = Mathf.Clamp01(movingBase    + _skillMovingBonus);
             float breakableChance = Mathf.Clamp01(breakableBase + _skillBreakableBonus);
             float temporaryChance = Mathf.Clamp01(temporaryBase + _skillTemporaryBonus);
 
-            // Ensure total special chance doesn't exceed 70%
+            // Cap total special chance at 70% so there's always a floor of statics
             float total = movingChance + breakableChance + temporaryChance;
             if (total > 0.70f)
             {
-                float scale = 0.70f / total;
+                float scale   = 0.70f / total;
                 movingChance    *= scale;
                 breakableChance *= scale;
                 temporaryChance *= scale;
@@ -217,19 +251,18 @@ namespace DoodleClimb.Platforms
             return Platform.PlatformType.Static;
         }
 
-        // ── AI platform lookahead ─────────────────────────────────────────────────
+        // ── AI platform lookahead (called by AIPlayerController + GameManager) ─────
         /// <summary>
-        /// Returns the next N platforms above a given Y, ordered bottom to top.
-        /// Used by AIPlayerController to plan ahead.
+        /// Returns the next N platforms above aboveY, ordered bottom to top.
+        /// _activePlatforms is already insertion-ordered (bottom→top) so
+        /// no sort is required — just iterate forward and return early.
         /// </summary>
         public List<Platform> GetPlatformsAbove(float aboveY, int count = 3)
         {
-            List<Platform> result     = new List<Platform>();
-            List<Platform> candidates = new List<Platform>(_activePlatforms);
-            candidates.Sort((a, b) =>
-                a.transform.position.y.CompareTo(b.transform.position.y));
+            List<Platform> result = new List<Platform>(count);
 
-            foreach (Platform p in candidates)
+            // _activePlatforms order: index 0 = lowest, last index = highest
+            foreach (Platform p in _activePlatforms)
             {
                 if (p == null || !p.gameObject.activeSelf || p.IsBroken) continue;
                 if (p.transform.position.y > aboveY)
@@ -246,10 +279,8 @@ namespace DoodleClimb.Platforms
         {
             for (int i = 0; i < platformPoolSize; i++)
             {
-                GameObject go = Instantiate(
-                    platformPrefab, Vector3.zero, Quaternion.identity, transform);
-                go.SetActive(false);
-                _pool.Enqueue(go.GetComponent<Platform>());
+                Platform p = CreatePooledPlatform();
+                _pool.Enqueue(p);
             }
         }
 
@@ -258,13 +289,23 @@ namespace DoodleClimb.Platforms
             if (_pool.Count > 0)
                 return _pool.Dequeue();
 
-            GameObject go = Instantiate(
-                platformPrefab, Vector3.zero, Quaternion.identity, transform);
+            // Pool exhausted — expand automatically
+            Debug.Log("[PlatformSpawner] Pool expanded.");
+            return CreatePooledPlatform();
+        }
+
+        private Platform CreatePooledPlatform()
+        {
+            GameObject go = Instantiate(platformPrefab, Vector3.zero,
+                                        Quaternion.identity, transform);
+            go.SetActive(false);
             return go.GetComponent<Platform>();
         }
 
+        /// <summary>Return a platform to the pool (called by Platform.cs).</summary>
         public void RecyclePlatform(Platform p)
         {
+            if (p == null) return;
             p.gameObject.SetActive(false);
             _activePlatforms.Remove(p);
             _pool.Enqueue(p);
