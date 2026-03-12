@@ -165,9 +165,10 @@ namespace DoodleClimb.UI
             _isWatchAIMode = isWatchAI;
             _challengeTarget = challengeTarget;
 
-            // AI score bar (vs-AI mode only)
+            // AI score bar: visible in vs-AI mode AND Watch AI mode.
+            // In Watch AI mode it shows the AI's climbing score.
             if (aiScoreContainer != null)
-                aiScoreContainer.SetActive(showAIScore);
+                aiScoreContainer.SetActive(showAIScore || isWatchAI);
 
             // "WATCHING AI" banner
             if (watchingAILabel != null)

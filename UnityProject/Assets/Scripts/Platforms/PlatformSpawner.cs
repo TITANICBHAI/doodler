@@ -68,13 +68,17 @@ namespace DoodleClimb.Platforms
 
         private float         _nextSpawnY;
         private float         _halfScreenWidth;
+        private float         _cameraHalfHeight;   // cached to avoid Camera.main per frame
         private System.Random _rng;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
         {
             if (Camera.main != null)
-                _halfScreenWidth = Camera.main.orthographicSize * Camera.main.aspect;
+            {
+                _halfScreenWidth  = Camera.main.orthographicSize * Camera.main.aspect;
+                _cameraHalfHeight = Camera.main.orthographicSize;
+            }
         }
 
         private void Start()
@@ -139,8 +143,8 @@ namespace DoodleClimb.Platforms
                 SpawnNextPlatform(currentMaxPlayerHeight);
 
             // Recycle platforms well below the camera bottom (two screen-heights below top)
-            float recycleY = cameraTopY - (Camera.main != null
-                ? Camera.main.orthographicSize * 2f + 3f
+            float recycleY = cameraTopY - (_cameraHalfHeight > 0f
+                ? _cameraHalfHeight * 2f + 3f
                 : 20f);
 
             // Iterate forward (lowest platforms first) — stop once we hit active ones
