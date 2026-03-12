@@ -6,12 +6,12 @@ namespace DoodleClimb.Game
     /// Smoothly follows the highest active character upward.
     /// The camera NEVER moves downward.
     ///
-    /// Dynamic Zoom:
-    ///   When both a player and an AI character are active, the camera
-    ///   automatically zooms out so both are always visible on screen.
-    ///   The orthographic size lerps toward whatever is required to keep
-    ///   the lower character in frame, clamped between min and max sizes.
-    ///   When they're close together it zooms back in.
+    /// Dynamic Zoom (vs-AI mode only):
+    ///   Zooms out ONLY when the PLAYER goes below the camera bottom edge.
+    ///   This happens when the AI climbs higher and the camera follows the AI,
+    ///   leaving the player behind.  The zoom restores immediately once the
+    ///   player is back in frame.  The AI falling below never triggers the
+    ///   zoom — the player doesn't need to watch the AI fall.
     ///
     /// Follow Mode:
     ///   Both      — follows the highest of player and AI (default vs-AI)
@@ -114,20 +114,28 @@ namespace DoodleClimb.Game
         // ── Dynamic zoom ──────────────────────────────────────────────────────────
         private void UpdateDynamicZoom()
         {
-            float lowerY  = Mathf.Min(playerTransform.position.y,
-                                      aiPlayerTransform.position.y);
+            // Only zoom out to keep the PLAYER in view.
+            // If the AI is the one falling behind, stay zoomed in on the player —
+            // the player doesn't need to see the AI below them.
+            float playerY  = playerTransform.position.y;
+            float camBottom = transform.position.y - _cam.orthographicSize;
 
-            // Distance from camera centre down to the lower character
-            float offset  = transform.position.y - lowerY;
+            if (playerY < camBottom + zoomPadding)
+            {
+                // Player is below (or near) the camera bottom — zoom out to show them
+                float offset   = transform.position.y - playerY;
+                float required = Mathf.Max(minOrthographicSize, offset + zoomPadding);
+                float target   = Mathf.Clamp(required, minOrthographicSize, maxOrthographicSize);
 
-            // Required half-height to show the lower character + padding
-            float required = Mathf.Max(minOrthographicSize, offset + zoomPadding);
-            float target   = Mathf.Clamp(required, minOrthographicSize, maxOrthographicSize);
-
-            _cam.orthographicSize = Mathf.Lerp(
-                _cam.orthographicSize,
-                target,
-                zoomSpeed * Time.deltaTime);
+                _cam.orthographicSize = Mathf.Lerp(
+                    _cam.orthographicSize, target, zoomSpeed * Time.deltaTime);
+            }
+            else
+            {
+                // Player is already visible — smoothly restore default zoom
+                _cam.orthographicSize = Mathf.Lerp(
+                    _cam.orthographicSize, minOrthographicSize, zoomSpeed * Time.deltaTime);
+            }
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────────
