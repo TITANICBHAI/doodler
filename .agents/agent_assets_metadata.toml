@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "WVq0SyCFC9bk0N7tG3T-e"
+uri = "file://attached_assets/generated_images/doodleclimb_screenshot.png"
+type = "image"
+title = "DoodleClimb — in-game screenshot mockup"
