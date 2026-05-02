@@ -16,27 +16,46 @@ const FALL_MULT  = 1.88;
 const PW = 42; const PH = 50; const PLH = 14;
 const CAM_LEAD = 0.38; const DEATH_OFF = 350; const TRAIL_LEN = 7;
 
-// ─── Persistent best ──────────────────────────────────────────────────────────
+// ─── Persistent storage ───────────────────────────────────────────────────────
 function getBest(): number {
   try { return Math.max(0, parseInt((globalThis as any).localStorage?.getItem?.("dc_best") || "0") || 0); } catch { return 0; }
 }
 function saveBest(v: number): void {
   try { (globalThis as any).localStorage?.setItem?.("dc_best", String(v)); } catch {}
 }
+function getLeaderboard(): number[] {
+  try { return JSON.parse((globalThis as any).localStorage?.getItem?.("dc_lb") || "[]") || []; } catch { return []; }
+}
+function addToLeaderboard(score: number): number[] {
+  if (score <= 0) return getLeaderboard();
+  const lb = getLeaderboard(); lb.push(score); lb.sort((a, b) => b - a);
+  const top = lb.slice(0, 3);
+  try { (globalThis as any).localStorage?.setItem?.("dc_lb", JSON.stringify(top)); } catch {}
+  return top;
+}
+
+// ─── Colour helpers ───────────────────────────────────────────────────────────
+type C3 = readonly [number, number, number];
+function lerp(a:number,b:number,t:number){return a+(b-a)*t;}
+function lerpC(c1:C3,c2:C3,t:number):string{
+  return `rgb(${Math.round(lerp(c1[0],c2[0],t))},${Math.round(lerp(c1[1],c2[1],t))},${Math.round(lerp(c1[2],c2[2],t))})`;
+}
+function hslToRgb(h:number,s:number,l:number):string{
+  s/=100;l/=100;const k=(n:number)=>(n+h/30)%12,a=s*Math.min(l,1-l);
+  const f=(n:number)=>Math.round((l-a*Math.max(-1,Math.min(k(n)-3,Math.min(9-k(n),1))))*255);
+  return `rgb(${f(0)},${f(8)},${f(4)})`;
+}
 
 // ─── Zone palette ─────────────────────────────────────────────────────────────
-type C3 = readonly [number, number, number];
 const ZONES = [
   { at:0,   sky:[245,240,232]as C3,line:[160,200,232]as C3,lop:0.30,txt:[26,26,42]   as C3,dark:false,label:"☁  Sunrise",   plrBg:[39,192,99]  as C3,plrBrd:[30,158,80]  as C3 },
   { at:150, sky:[238,190,148]as C3,line:[200,120,70] as C3,lop:0.35,txt:[55,20,5]    as C3,dark:false,label:"🌅  Sunset",    plrBg:[245,130,48] as C3,plrBrd:[210,95,25]  as C3 },
   { at:400, sky:[18,28,60]   as C3,line:[55,95,135]  as C3,lop:0.45,txt:[200,228,255]as C3,dark:true, label:"🌙  Night Sky", plrBg:[210,235,255]as C3,plrBrd:[140,190,235]as C3 },
   { at:800, sky:[6,8,18]     as C3,line:[20,45,80]   as C3,lop:0.55,txt:[90,170,255] as C3,dark:true, label:"🚀  Deep Space",plrBg:[0,230,255]  as C3,plrBrd:[0,175,210] as C3 },
 ] as const;
+const ZONE_FLASH_COLS=["rgba(255,210,80,0.38)","rgba(255,110,30,0.38)","rgba(60,100,220,0.38)","rgba(0,200,255,0.38)"];
 
-function lerp(a:number,b:number,t:number){return a+(b-a)*t;}
-function lerpC(c1:C3,c2:C3,t:number):string{
-  return `rgb(${Math.round(lerp(c1[0],c2[0],t))},${Math.round(lerp(c1[1],c2[1],t))},${Math.round(lerp(c1[2],c2[2],t))})`;
-}
+function zoneIdx(score:number):number{ return score<150?0:score<400?1:score<800?2:3; }
 function zoneColors(score:number){
   for(let i=0;i<ZONES.length-1;i++){
     if(score<ZONES[i+1].at){
@@ -60,13 +79,20 @@ const PCOL:Record<PType,string>={static:"#2DC968",moving:"#4EAAF5",spring:"#F5D1
 const PBORD:Record<PType,string>={static:"#1AA850",moving:"#2D88D8",spring:"#D4A800",breakable:"#C83018"};
 const P_GREEN="#27C063"; const P_DARK="#1E9E50";
 
+// ─── City silhouette buildings (pre-computed) ─────────────────────────────────
+const CITY_BLDGS = Array.from({length:20},(_,i)=>({
+  x: (i*(SW/11))+Math.sin(i*2.73)*18-24,
+  w: 16+Math.abs(Math.sin(i*1.73))*38,
+  h: 42+Math.abs(Math.cos(i*2.11))*168,
+}));
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Phase="menu"|"play"|"dead";
 type PUType="jetpack"|"shield"|"magnet";
 type EnemyType="bird"|"ghost"|"ufo"|"asteroid";
 
-interface Plat    {id:number;x:number;y:number;w:number;type:PType;broken:boolean;ox:number;dir:number;range:number;sq:number;}
-interface Particle{x:number;y:number;vx:number;vy:number;life:number;color:string;r:number;}
+interface Plat     {id:number;x:number;y:number;w:number;type:PType;broken:boolean;ox:number;dir:number;range:number;sq:number;}
+interface Particle {x:number;y:number;vx:number;vy:number;life:number;color:string;r:number;}
 interface TrailPt  {x:number;y:number;}
 interface Cloud    {id:number;x:number;y:number;w:number;h:number;par:number;op:number;}
 interface Coin     {id:number;x:number;y:number;collected:boolean;popT:number;}
@@ -74,19 +100,22 @@ interface PU       {id:number;x:number;y:number;tp:PUType;col:boolean;bt:number;
 interface Planet   {id:number;x:number;y:number;r:number;c:string;ring:boolean;par:number;}
 interface SShoot   {id:number;sx:number;sy:number;vx:number;vy:number;life:number;}
 interface Enemy    {id:number;x:number;y:number;vx:number;vy:number;type:EnemyType;wt:number;dead:boolean;}
+interface WarpStar {id:number;x:number;y:number;vy:number;r:number;}
+interface TextPop  {id:number;x:number;y:number;vy:number;life:number;text:string;color:string;}
 
 interface GS {
   px:number;py:number;pvx:number;pvy:number;psx:number;psy:number;facing:number;eyeY:number;
   scrollY:number;minY:number;startY:number;
   score:number;best:number;
-  combo:number;comboT:number;
-  maxCombo:number;coinsCollected:number;enemiesDefeated:number;
+  combo:number;comboT:number;maxCombo:number;coinsCollected:number;enemiesDefeated:number;
   lives:number;jetpackT:number;magnetT:number;shielded:boolean;canDJump:boolean;invincT:number;
   djumpFlashT:number;stompFlashT:number;
   milestoneText:string;milestoneT:number;lastMilestone:number;
+  lastZoneIdx:number;zoneFlashT:number;zoneFlashCol:string;
   ssTimer:number;
   plats:Plat[];parts:Particle[];trail:TrailPt[];clouds:Cloud[];
   coins:Coin[];powerUps:PU[];planets:Planet[];shootStars:SShoot[];enemies:Enemy[];
+  warpStars:WarpStar[];textPops:TextPop[];
   phase:Phase;input:number;
   shakeX:number;shakeY:number;shakeT:number;
   pid:number;
@@ -110,19 +139,15 @@ function mkStat(gs:GS,y:number,x:number,w:number):Plat{
 function mkCloud(gs:GS,wy:number):Cloud{
   return{id:gs.pid++,x:Math.random()*(SW-120),y:wy,w:90+Math.random()*100,h:28+Math.random()*24,par:0.22+Math.random()*0.18,op:0.55+Math.random()*0.35};
 }
-function mkPU(gs:GS,y:number,tp:PUType):PU{
-  return{id:gs.pid++,x:20+Math.random()*(SW-60),y,tp,col:false,bt:0};
-}
+function mkPU(gs:GS,y:number,tp:PUType):PU{ return{id:gs.pid++,x:20+Math.random()*(SW-60),y,tp,col:false,bt:0}; }
 function mkPlanet(gs:GS,wy:number):Planet{
   const cols=["#9B5DE5","#F15BB5","#00BBF9","#FF6B6B","#5BC0EB","#FF9F1C"];
   return{id:gs.pid++,x:30+Math.random()*(SW-80),y:wy,r:32+Math.random()*44,c:cols[Math.floor(Math.random()*cols.length)],ring:Math.random()<0.6,par:0.10+Math.random()*0.12};
 }
 function getEType(score:number):EnemyType{
   const r=Math.random();
-  if(score<180) return"bird";
-  if(score<450) return r<0.55?"bird":"ghost";
-  if(score<850) return r<0.25?"bird":r<0.65?"ghost":"ufo";
-  return r<0.45?"ufo":"asteroid";
+  if(score<180) return"bird"; if(score<450) return r<0.55?"bird":"ghost";
+  if(score<850) return r<0.25?"bird":r<0.65?"ghost":"ufo"; return r<0.45?"ufo":"asteroid";
 }
 function mkEnemy(gs:GS,y:number,score:number):Enemy{
   const tp=getEType(score),ml=Math.random()<0.5;
@@ -138,23 +163,20 @@ function mkGS(best:number):GS{
   const startY=SH*0.70;
   const gs:GS={
     px:SW/2-PW/2,py:startY,pvx:0,pvy:JUMP_VEL,psx:1,psy:1,facing:1,eyeY:0,
-    scrollY:0,minY:startY,startY,
-    score:0,best,
+    scrollY:0,minY:startY,startY,score:0,best,
     combo:0,comboT:0,maxCombo:0,coinsCollected:0,enemiesDefeated:0,
-    lives:3,jetpackT:0,magnetT:0,shielded:false,canDJump:true,invincT:0,
-    djumpFlashT:0,stompFlashT:0,
+    lives:3,jetpackT:0,magnetT:0,shielded:false,canDJump:true,invincT:0,djumpFlashT:0,stompFlashT:0,
     milestoneText:"",milestoneT:0,lastMilestone:0,
+    lastZoneIdx:-1,zoneFlashT:0,zoneFlashCol:"",
     ssTimer:9,
     plats:[],parts:[],trail:[],clouds:[],coins:[],powerUps:[],planets:[],shootStars:[],enemies:[],
+    warpStars:[],textPops:[],
     phase:"menu",input:0,shakeX:0,shakeY:0,shakeT:0,pid:0,
   };
   gs.plats.push(mkStat(gs,startY+PH,SW/2-52,104));
   let y=startY;
   for(let i=0;i<6;i++){y-=58+Math.random()*26;const w=80+Math.random()*22,cx=SW*0.2+Math.random()*SW*0.6;gs.plats.push(mkStat(gs,y,cx-w/2,w));}
-  for(let i=0;i<18;i++){
-    y-=70+Math.random()*46;gs.plats.push(mkPlat(gs,y,0));
-    if(Math.random()<0.32) gs.coins.push({id:gs.pid++,x:gs.plats[gs.plats.length-1].x+20+Math.random()*30,y:y-28,collected:false,popT:0});
-  }
+  for(let i=0;i<18;i++){y-=70+Math.random()*46;gs.plats.push(mkPlat(gs,y,0));if(Math.random()<0.32)gs.coins.push({id:gs.pid++,x:gs.plats[gs.plats.length-1].x+20+Math.random()*30,y:y-28,collected:false,popT:0});}
   let cy=startY;
   for(let i=0;i<8;i++){cy-=SH*(0.35+Math.random()*0.3);gs.clouds.push(mkCloud(gs,cy));}
   return gs;
@@ -167,6 +189,9 @@ function emit(gs:GS,cx:number,cy:number,col:string,n:number){
     gs.parts.push({x:cx,y:cy,color:col,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd-85,life:1,r:3+Math.random()*5});
   }
 }
+function pop(gs:GS,x:number,y:number,text:string,color:string){
+  gs.textPops.push({id:gs.pid++,x,y,vy:-92,life:1,text,color});
+}
 function comboCol(n:number){return n>=15?"#FF2200":n>=10?"#FF9900":n>=5?"#F5D123":"#50F0AA";}
 function comboMult(n:number){return n>=15?2.5:n>=10?2:n>=5?1.5:1;}
 
@@ -177,6 +202,7 @@ function update(gs:GS,dt:number,now:number){
   gs.pvx=gs.input*PLAYER_SPD;
   if(gs.input!==0) gs.facing=gs.input;
 
+  // Jetpack
   if(gs.jetpackT>0){
     gs.jetpackT-=dt;
     gs.pvy+=(JETPACK_VY-gs.pvy)*Math.min(1,dt*5);
@@ -215,24 +241,20 @@ function update(gs:GS,dt:number,now:number){
     }
   }
 
-  // Coins — with magnet attraction
+  // Magnet + Coins
   const pcx=gs.px+PW/2,pcy=gs.py+PH/2;
   if(gs.magnetT>0){
     gs.magnetT-=dt;
-    for(const c of gs.coins){
-      if(c.collected) continue;
-      const dx=pcx-c.x,dy=pcy-c.y,dist=Math.hypot(dx,dy);
-      if(dist<160&&dist>0){const spd=(200*(1-dist/160)+60);c.x+=dx/dist*spd*dt;c.y+=dy/dist*spd*dt;}
-    }
+    for(const c of gs.coins){if(c.collected)continue;const dx=pcx-c.x,dy=pcy-c.y,d=Math.hypot(dx,dy);if(d<165&&d>0){const spd=200*(1-d/165)+55;c.x+=dx/d*spd*dt;c.y+=dy/d*spd*dt;}}
   }
   for(const c of gs.coins){
     if(c.collected){c.popT=Math.max(0,c.popT-dt*3);continue;}
     if(Math.hypot(pcx-c.x,pcy-c.y)<22){
-      c.collected=true;c.popT=1;
-      gs.coinsCollected++;
+      c.collected=true;c.popT=1;gs.coinsCollected++;
       const bonus=Math.round(5*comboMult(gs.combo));
       gs.score+=bonus;
       emit(gs,c.x,c.y,"#F5D123",5);
+      pop(gs,c.x,c.y-10,`+${bonus}`,"#F5D123");
     }
   }
 
@@ -249,12 +271,7 @@ function update(gs:GS,dt:number,now:number){
   }
 
   // Enemies
-  for(const e of gs.enemies){
-    if(e.dead) continue;
-    e.x+=e.vx*dt;e.y+=e.vy*dt;e.wt+=dt;
-    if(e.type==="ghost"||e.type==="ufo") e.y+=Math.sin(e.wt*2.5)*28*dt;
-  }
-  // Enemy collision — stomp first, then side-hit
+  for(const e of gs.enemies){if(e.dead)continue;e.x+=e.vx*dt;e.y+=e.vy*dt;e.wt+=dt;if(e.type==="ghost"||e.type==="ufo")e.y+=Math.sin(e.wt*2.5)*28*dt;}
   if(gs.invincT<=0){
     const EW=36,EH=30;
     for(const e of gs.enemies){
@@ -262,17 +279,16 @@ function update(gs:GS,dt:number,now:number){
       const overX=gs.px+PW>e.x+5&&gs.px<e.x+EW-5;
       if(!overX) continue;
       const feet=gs.py+PH;
-      // Stomp: falling + feet hit top-half of enemy
       if(gs.pvy>0&&feet>=e.y-2&&feet<=e.y+EH*0.42){
-        e.dead=true;
-        gs.pvy=JUMP_VEL*0.88;gs.py=e.y-PH;
+        e.dead=true;gs.pvy=JUMP_VEL*0.88;gs.py=e.y-PH;
         gs.psx=1.45;gs.psy=0.60;gs.canDJump=true;
         gs.combo++;gs.comboT=2.8;gs.stompFlashT=0.65;
         gs.enemiesDefeated++;gs.score+=15;
         if(gs.combo>gs.maxCombo) gs.maxCombo=gs.combo;
-        emit(gs,e.x+EW/2,e.y,"#FF8844",20);gs.shakeT=0.10;break;
+        emit(gs,e.x+EW/2,e.y,"#FF8844",20);
+        pop(gs,e.x+EW/2,e.y-12,"+15 STOMP!","#FF8844");
+        gs.shakeT=0.10;break;
       }
-      // Side hit
       if(feet>e.y+EH*0.35&&gs.py<e.y+EH-5){
         e.dead=true;emit(gs,e.x+EW/2,e.y,"#FF5533",14);
         if(gs.shielded){gs.shielded=false;gs.invincT=1.5;gs.enemiesDefeated++;}
@@ -287,15 +303,20 @@ function update(gs:GS,dt:number,now:number){
   const ideal=gs.py-SH*CAM_LEAD;
   if(ideal<gs.scrollY) gs.scrollY=ideal;
 
-  // Score + milestones + save best
+  // Score + milestones + best save
   if(gs.py<gs.minY) gs.minY=gs.py;
   gs.score=Math.max(gs.score,Math.floor((gs.startY-gs.minY)/5));
   if(gs.score>gs.best){gs.best=gs.score;saveBest(gs.best);}
-  for(const m of MILESTONES){
-    if(gs.score>=m&&m>gs.lastMilestone){gs.lastMilestone=m;gs.milestoneText=`${m} m`;gs.milestoneT=2.2;}
+  for(const m of MILESTONES){if(gs.score>=m&&m>gs.lastMilestone){gs.lastMilestone=m;gs.milestoneText=`${m} m`;gs.milestoneT=2.2;}}
+
+  // Zone transition flash
+  const cz=zoneIdx(gs.score);
+  if(cz!==gs.lastZoneIdx){
+    if(gs.lastZoneIdx>=0){gs.zoneFlashT=0.75;gs.zoneFlashCol=ZONE_FLASH_COLS[cz];}
+    gs.lastZoneIdx=cz;
   }
 
-  // Generate world
+  // World generation
   const topGenY=gs.scrollY-SH*0.55;
   let topY=gs.plats.length?Math.min(...gs.plats.map(p=>p.y)):gs.startY;
   let safety=0;
@@ -325,11 +346,23 @@ function update(gs:GS,dt:number,now:number){
     gs.shootStars=gs.shootStars.filter(s=>s.life>0&&s.sx>-60);
   }
 
+  // Warp stars (space zone, screen-space particles)
+  if(gs.score>750){
+    const depth=Math.min(1,(gs.score-750)/300);
+    if(Math.random()<depth*14*dt) gs.warpStars.push({id:gs.pid++,x:Math.random()*SW,y:SH+10,vy:-(320+Math.random()*680*(1+depth)),r:0.6+Math.random()*1.8});
+    for(const ws of gs.warpStars) ws.y+=ws.vy*dt;
+    gs.warpStars=gs.warpStars.filter(ws=>ws.y>-24);
+  } else { if(gs.warpStars.length) gs.warpStars=[]; }
+
   // Particles
   for(const pt of gs.parts){pt.x+=pt.vx*dt;pt.y+=pt.vy*dt;pt.vy+=560*dt;pt.life-=dt*2.2;}
   gs.parts=gs.parts.filter(p=>p.life>0);
 
-  // Lerps
+  // Text pops
+  for(const tp of gs.textPops){tp.y+=tp.vy*dt;tp.vy*=0.92;tp.life-=dt*1.6;}
+  gs.textPops=gs.textPops.filter(t=>t.life>0);
+
+  // Squash lerps
   const sr=1-Math.exp(-13*dt);
   gs.psx+=(1-gs.psx)*sr;gs.psy+=(1-gs.psy)*sr;
   for(const p of gs.plats) p.sq+=(0-p.sq)*Math.min(1,dt*14);
@@ -341,6 +374,7 @@ function update(gs:GS,dt:number,now:number){
   if(gs.invincT>0)      gs.invincT-=dt;
   if(gs.djumpFlashT>0)  gs.djumpFlashT-=dt;
   if(gs.stompFlashT>0)  gs.stompFlashT-=dt;
+  if(gs.zoneFlashT>0)   gs.zoneFlashT-=dt;
 
   // Cleanup
   const cutY=gs.scrollY+SH+300;
@@ -359,7 +393,7 @@ function update(gs:GS,dt:number,now:number){
   }
 }
 
-// ─── Background ───────────────────────────────────────────────────────────────
+// ─── Background (sky, lines, stars, aurora) ───────────────────────────────────
 const LINE_SPACING=44;
 const LINE_COUNT=Math.ceil(SH/LINE_SPACING)+3;
 const STAR_SEEDS=Array.from({length:32},(_,i)=>({x:(Math.sin(i*2.39)*0.5+0.5)*SW,y:(Math.cos(i*1.61)*0.5+0.5)*SH,r:1+(i%3)*0.8,ph:i*1.7}));
@@ -390,7 +424,7 @@ function Background({scrollY,score}:{scrollY:number;score:number}){
   );
 }
 
-// ─── Bg decorations: clouds + planets + sun + moon + shooting stars ────────────
+// ─── BgLayer: clouds + planets + city + sun + moon + shooting stars ────────────
 function BgLayer({clouds,planets,shootStars,scrollY,dark,score}:{
   clouds:Cloud[];planets:Planet[];shootStars:SShoot[];scrollY:number;dark:boolean;score:number;
 }){
@@ -398,13 +432,28 @@ function BgLayer({clouds,planets,shootStars,scrollY,dark,score}:{
   const moonOp=Math.max(0,Math.min(1,(score-320)/120));
   const moonSky=`rgb(${zc.rawSky.join(",")})`;
   const cc=dark?"rgba(80,120,200,":"rgba(255,255,255,";
-  // Sun transitions
   const riseSunOp=Math.max(0,1-score/110);
   const setSunOp=Math.max(0,Math.min(1,score<230?(score-80)/150:1-(score-230)/200));
-  const now=Date.now();
+  const cityOp=Math.max(0,1-score/220);
   return(
     <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
-      {/* Sunrise sun (top-right, small, bright) */}
+      {/* City silhouette */}
+      {cityOp>0.02&&(
+        <View style={{position:"absolute",left:0,right:0,bottom:0,height:220,opacity:cityOp*0.72}}>
+          {CITY_BLDGS.map((bld,i)=>(
+            <View key={i} style={{position:"absolute",left:bld.x,bottom:0,width:bld.w,height:bld.h,backgroundColor:dark?"rgba(10,15,35,0.9)":"rgba(28,18,10,0.52)"}}>
+              {/* Lit windows */}
+              {Array.from({length:Math.floor(bld.h/28)},(_,j)=>(
+                <View key={j} style={{position:"absolute",left:3,right:3,top:j*28+6,height:8,flexDirection:"row",gap:2}}>
+                  <View style={{flex:1,backgroundColor:`rgba(255,220,100,${Math.sin(i*3.7+j*1.9)>0.1?0.45:0.05})`}}/>
+                  <View style={{flex:1,backgroundColor:`rgba(255,220,100,${Math.sin(i*2.1+j*3.3)>0.15?0.40:0.05})`}}/>
+                </View>
+              ))}
+            </View>
+          ))}
+        </View>
+      )}
+      {/* Sunrise sun */}
       {riseSunOp>0&&(
         <View style={{position:"absolute",right:22,top:100,opacity:riseSunOp}}>
           <View style={{width:42,height:42,borderRadius:21,backgroundColor:"#FFE840"}}/>
@@ -412,23 +461,20 @@ function BgLayer({clouds,planets,shootStars,scrollY,dark,score}:{
           <View style={{position:"absolute",left:-22,top:-22,right:-22,bottom:-22,borderRadius:70,backgroundColor:"rgba(255,200,40,0.10)"}}/>
         </View>
       )}
-      {/* Sunset sun (large, warm, horizon) */}
+      {/* Sunset sun */}
       {setSunOp>0.05&&(
         <View style={{position:"absolute",right:28,top:SH*0.52,opacity:setSunOp*0.88}}>
           <View style={{width:78,height:78,borderRadius:39,backgroundColor:"#FF7820"}}/>
           <View style={{position:"absolute",left:-14,top:-14,right:-14,bottom:-14,borderRadius:70,backgroundColor:"rgba(255,120,30,0.20)"}}/>
           <View style={{position:"absolute",left:-28,top:-28,right:-28,bottom:-28,borderRadius:100,backgroundColor:"rgba(255,90,20,0.10)"}}/>
-          {/* Lens flare */}
           <View style={{position:"absolute",left:-55,top:20,width:22,height:22,borderRadius:11,backgroundColor:"rgba(255,180,60,0.22)"}}/>
           <View style={{position:"absolute",left:-90,top:30,width:12,height:12,borderRadius:6,backgroundColor:"rgba(255,200,100,0.18)"}}/>
-          {/* Sun shimmer */}
           <View style={{position:"absolute",left:18,top:14,width:20,height:20,borderRadius:10,backgroundColor:"rgba(255,220,160,0.35)"}}/>
         </View>
       )}
       {/* Planets */}
       {planets.map(p=>{
-        const sy=p.y-scrollY*p.par;
-        if(sy>SH+80||sy<-80) return null;
+        const sy=p.y-scrollY*p.par; if(sy>SH+80||sy<-80) return null;
         return(
           <View key={p.id} style={{position:"absolute",left:p.x-p.r,top:sy-p.r,width:p.r*2,height:p.r*2,borderRadius:p.r,backgroundColor:p.c,opacity:0.72}}>
             {p.ring&&<View style={{position:"absolute",left:-p.r*0.35,right:-p.r*0.35,top:p.r*0.5,bottom:p.r*0.5,borderRadius:p.r*2,borderWidth:4,borderColor:p.c,opacity:0.55,transform:[{scaleY:0.28}]}}/>}
@@ -438,8 +484,7 @@ function BgLayer({clouds,planets,shootStars,scrollY,dark,score}:{
       })}
       {/* Clouds */}
       {clouds.map(c=>{
-        const sy=c.y-scrollY*c.par;
-        if(sy>SH+80||sy<-80) return null;
+        const sy=c.y-scrollY*c.par; if(sy>SH+80||sy<-80) return null;
         return(
           <View key={c.id} style={{position:"absolute",left:c.x,top:sy,width:c.w,height:c.h,opacity:c.op}}>
             <View style={[b.cloudBody,{width:c.w*0.75,height:c.h,left:c.w*0.12,backgroundColor:cc+"0.9)"}]}/>
@@ -448,7 +493,7 @@ function BgLayer({clouds,planets,shootStars,scrollY,dark,score}:{
           </View>
         );
       })}
-      {/* Crescent moon */}
+      {/* Moon */}
       {moonOp>0&&(
         <View style={{position:"absolute",right:28,top:120,opacity:moonOp}}>
           <View style={{width:46,height:46,borderRadius:23,backgroundColor:"#FFF8D8"}}/>
@@ -480,11 +525,7 @@ const PlatView=React.memo(function PlatView({p}:{p:Plat}){
 const ENEMY_ICON:Record<EnemyType,string>={bird:"🐦",ghost:"👻",ufo:"🛸",asteroid:"☄️"};
 function EnemyView({e}:{e:Enemy}){
   if(e.dead) return null;
-  return(
-    <View style={{position:"absolute",left:e.x,top:e.y,width:38,height:32,alignItems:"center",justifyContent:"center"}}>
-      <Text style={{fontSize:26,transform:[{scaleX:e.vx>0?-1:1}]}}>{ENEMY_ICON[e.type]}</Text>
-    </View>
-  );
+  return(<View style={{position:"absolute",left:e.x,top:e.y,width:38,height:32,alignItems:"center",justifyContent:"center"}}><Text style={{fontSize:26,transform:[{scaleX:e.vx>0?-1:1}]}}>{ENEMY_ICON[e.type]}</Text></View>);
 }
 
 // ─── Power-up ─────────────────────────────────────────────────────────────────
@@ -501,7 +542,7 @@ function PUView({pu}:{pu:PU}){
   );
 }
 
-// ─── Coin (spinning) ──────────────────────────────────────────────────────────
+// ─── Coin ─────────────────────────────────────────────────────────────────────
 function CoinView({c,now}:{c:Coin;now:number}){
   if(c.collected&&c.popT<=0) return null;
   const spin=c.collected?1+(1-c.popT)*0.5:Math.abs(Math.cos(now/320))*0.75+0.25;
@@ -548,15 +589,13 @@ function Shadow({gs}:{gs:GS}){
 function SpeedLines({gs,col,now}:{gs:GS;col:string;now:number}){
   if(gs.pvy<520) return null;
   const intensity=Math.min(1,(gs.pvy-520)/700),t=now/70;
-  return<>{[0,1,2,3,4].map(i=>{const ox=Math.sin(t+i*2.1)*26,len=12+Math.cos(t*0.8+i*1.5)*7;return <View key={i} style={{position:"absolute",left:gs.px+PW/2+ox-1.5,top:gs.py-len-8,width:3,height:len,borderRadius:2,backgroundColor:col,opacity:0.22*intensity}}/>;})}</>;
+  return<>{[0,1,2,3,4].map(i=>{const ox=Math.sin(t+i*2.1)*26,len=12+Math.cos(t*0.8+i*1.5)*7;return<View key={i} style={{position:"absolute",left:gs.px+PW/2+ox-1.5,top:gs.py-len-8,width:3,height:len,borderRadius:2,backgroundColor:col,opacity:0.22*intensity}}/>;})}</>;
 }
 
 // ─── Height bar ───────────────────────────────────────────────────────────────
 function HeightBar({score,best,dark,topPad}:{score:number;best:number;dark:boolean;topPad:number}){
-  const maxH=Math.max(best,score,50);
-  const barH=SH-topPad-80;
-  const curFrac=Math.min(1,score/maxH);
-  const bestFrac=best>0?Math.min(1,best/maxH):0;
+  const maxH=Math.max(best,score,50),barH=SH-topPad-80;
+  const curFrac=Math.min(1,score/maxH),bestFrac=best>0?Math.min(1,best/maxH):0;
   return(
     <View style={{position:"absolute",right:7,top:topPad+20,height:barH,width:4,borderRadius:2,backgroundColor:dark?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.10)"}}>
       <View style={{position:"absolute",left:0,bottom:0,right:0,height:barH*curFrac,borderRadius:2,backgroundColor:dark?"rgba(100,200,255,0.45)":"rgba(39,192,99,0.45)"}}/>
@@ -566,32 +605,23 @@ function HeightBar({score,best,dark,topPad}:{score:number;best:number;dark:boole
   );
 }
 
-// ─── HUD components ───────────────────────────────────────────────────────────
+// ─── HUD helpers ──────────────────────────────────────────────────────────────
 function LivesDisplay({lives,dark}:{lives:number;dark:boolean}){
   return(<View style={s.livesRow}>{[0,1,2].map(i=>(<Text key={i} style={[s.heart,{opacity:i<lives?1:0.22,color:i<lives?"#FF4455":dark?"#884455":"#FF4455"}]}>♥</Text>))}</View>);
 }
 function TimerBar({t,max,col,icon}:{t:number;max:number;col:string;icon:string}){
   if(t<=0) return null;
-  return(
-    <View style={s.timerRow}>
-      <Text style={s.timerIcon}>{icon}</Text>
-      <View style={[s.timerTrack,{backgroundColor:col+"33"}]}><View style={[s.timerFill,{width:`${Math.max(0,Math.min(1,t/max))*100}%` as any,backgroundColor:col}]}/></View>
-    </View>
-  );
+  return(<View style={s.timerRow}><Text style={s.timerIcon}>{icon}</Text><View style={[s.timerTrack,{backgroundColor:col+"33"}]}><View style={[s.timerFill,{width:`${Math.max(0,Math.min(1,t/max))*100}%` as any,backgroundColor:col}]}/></View></View>);
 }
-
-// ─── Stat pill ────────────────────────────────────────────────────────────────
 function StatPill({icon,val,label}:{icon:string;val:number;label:string}){
-  return(
-    <View style={s.statPill}>
-      <Text style={s.statIcon}>{icon}</Text>
-      <Text style={s.statVal}>{val}</Text>
-      <Text style={s.statLabel}>{label}</Text>
-    </View>
-  );
+  return(<View style={s.statPill}><Text style={s.statIcon}>{icon}</Text><Text style={s.statVal}>{val}</Text><Text style={s.statLabel}>{label}</Text></View>);
+}
+function LbRow({score,rank}:{score:number;rank:number}){
+  const medals=["🥇","🥈","🥉"];
+  return(<View style={s.lbRow}><Text style={s.lbMedal}>{medals[rank]??""}</Text><Text style={s.lbScore}>{score}</Text><Text style={s.lbM}>m</Text></View>);
 }
 
-// ─── Main game screen ─────────────────────────────────────────────────────────
+// ─── Main screen ──────────────────────────────────────────────────────────────
 export default function GameScreen(){
   const insets=useSafeAreaInsets();
   const gs=useRef<GS>(mkGS(getBest()));
@@ -600,6 +630,7 @@ export default function GameScreen(){
   const prevTs=useRef<number>(0);
   const nowRef=useRef<number>(0);
   const [phase,setPhase]=useState<Phase>("menu");
+  const [leaderboard,setLeaderboard]=useState<number[]>(()=>getLeaderboard());
 
   const loop=useCallback((ts:number)=>{
     if(prevTs.current===0) prevTs.current=ts;
@@ -612,6 +643,11 @@ export default function GameScreen(){
   },[phase]);
 
   useEffect(()=>{rafRef.current=requestAnimationFrame(loop);return()=>cancelAnimationFrame(rafRef.current);},[loop]);
+
+  // Save leaderboard when game ends
+  useEffect(()=>{
+    if(phase==="dead") setLeaderboard(addToLeaderboard(gs.current.score));
+  },[phase]);
 
   useEffect(()=>{
     if(Platform.OS!=="web") return;
@@ -628,10 +664,7 @@ export default function GameScreen(){
 
   const triggerDJump=useCallback(()=>{
     const g=gs.current;
-    if(g.canDJump&&g.pvy>60&&g.invincT<=0&&g.jetpackT<=0){
-      g.pvy=DJUMP_VEL;g.canDJump=false;g.psx=0.80;g.psy=1.24;g.djumpFlashT=0.65;
-      emit(g,g.px+PW/2,g.py+PH,"#50FFBB",8);
-    }
+    if(g.canDJump&&g.pvy>60&&g.invincT<=0&&g.jetpackT<=0){g.pvy=DJUMP_VEL;g.canDJump=false;g.psx=0.80;g.psy=1.24;g.djumpFlashT=0.65;emit(g,g.px+PW/2,g.py+PH,"#50FFBB",8);}
   },[]);
 
   const startGame=useCallback(()=>{
@@ -642,13 +675,9 @@ export default function GameScreen(){
 
   const onTouchStart=useCallback((e:any)=>{
     if(gs.current.phase==="menu"||gs.current.phase==="dead") return;
-    gs.current.input=e.nativeEvent.locationX<SW/2?-1:1;
-    triggerDJump();
+    gs.current.input=e.nativeEvent.locationX<SW/2?-1:1;triggerDJump();
   },[triggerDJump]);
-  const onTouchMove=useCallback((e:any)=>{
-    if(gs.current.phase!=="play") return;
-    gs.current.input=e.nativeEvent.locationX<SW/2?-1:1;
-  },[]);
+  const onTouchMove=useCallback((e:any)=>{if(gs.current.phase!=="play")return;gs.current.input=e.nativeEvent.locationX<SW/2?-1:1;},[]);
   const onTouchEnd=useCallback(()=>{gs.current.input=0;},[]);
 
   const r=gs.current;
@@ -658,8 +687,9 @@ export default function GameScreen(){
   const now=nowRef.current;
   const fallDark=Math.min(0.30,Math.max(0,r.pvy-620)/3800);
   const mult=comboMult(r.combo);
+  const rainbow=r.combo>=10&&r.comboT>0;
 
-  // Platform target highlight (closest platform player is falling toward)
+  // Platform target highlight (closest below while falling)
   const hlPlatId=(()=>{
     if(r.phase!=="play"||r.pvy<0) return -1;
     const feet=r.py+PH;let best:Plat|null=null,minD=140;
@@ -676,6 +706,10 @@ export default function GameScreen(){
 
         {/* World layer */}
         <View style={[StyleSheet.absoluteFillObject,{transform:[{translateX:r.shakeX},{translateY:-r.scrollY+r.shakeY}]}]} pointerEvents="none">
+          {/* Ground decoration */}
+          <View style={{position:"absolute",left:-30,top:r.startY+PH+PLH,right:-30,height:220,backgroundColor:"#7A5C3A"}}>
+            <View style={{height:12,backgroundColor:"#3DB060"}}/>
+          </View>
           <Shadow gs={r}/>
           {/* Platform highlight ring */}
           {hlPlatId>=0&&r.plats.filter(p=>p.id===hlPlatId).map(p=>(
@@ -685,20 +719,34 @@ export default function GameScreen(){
           {r.powerUps.map(p=><PUView key={p.id} pu={p}/>)}
           {r.coins.map(c=><CoinView key={c.id} c={c} now={now}/>)}
           {r.enemies.map(e=><EnemyView key={e.id} e={e}/>)}
-          {r.trail.map((t,i)=>(
-            <View key={i} style={{position:"absolute",left:t.x-PW*0.22,top:t.y-PH*0.22,width:PW*0.44,height:PH*0.44,borderRadius:PW*0.22,backgroundColor:zc.plrBg,opacity:(1-i/TRAIL_LEN)*0.28}}/>
-          ))}
+          {/* Trail — rainbow when combo ≥ 10 */}
+          {r.trail.map((t,i)=>{
+            const col=rainbow?hslToRgb((i*52+now/12)%360,90,62):zc.plrBg;
+            const op=(1-i/TRAIL_LEN)*(rainbow?0.65:0.28);
+            return <View key={i} style={{position:"absolute",left:t.x-PW*0.25,top:t.y-PH*0.25,width:PW*0.5,height:PH*0.5,borderRadius:PW*0.25,backgroundColor:col,opacity:op}}/>;
+          })}
           {r.parts.map((p,i)=>(
             <View key={i} style={{position:"absolute",left:p.x-p.r,top:p.y-p.r,width:p.r*2,height:p.r*2,borderRadius:p.r,backgroundColor:p.color,opacity:Math.max(0,p.life)}}/>
+          ))}
+          {/* Floating score pop-ups */}
+          {r.textPops.map(tp=>(
+            <Text key={tp.id} style={{position:"absolute",left:tp.x-28,top:tp.y,color:tp.color,fontSize:13,fontWeight:"900",opacity:Math.max(0,tp.life),letterSpacing:0.5,textShadowColor:"rgba(0,0,0,0.35)",textShadowOffset:{width:0,height:1},textShadowRadius:3}}>{tp.text}</Text>
           ))}
           <SpeedLines gs={r} col={zc.txt} now={now}/>
           <PlayerView gs={r} plrBg={zc.plrBg} plrBrd={zc.plrBrd}/>
         </View>
 
+        {/* Warp stars (screen-space, space zone) */}
+        {r.score>750&&r.warpStars.map(ws=>(
+          <View key={ws.id} pointerEvents="none" style={{position:"absolute",left:ws.x-ws.r,top:ws.y-ws.r*7,width:ws.r*2,height:Math.max(ws.r*2,ws.r*12),borderRadius:ws.r,backgroundColor:"rgba(255,255,255,0.82)"}}/>
+        ))}
+
         {/* Fall vignette */}
         {phase==="play"&&fallDark>0&&(<View style={{...StyleSheet.absoluteFillObject as any,backgroundColor:`rgba(0,0,0,${fallDark.toFixed(3)})`}} pointerEvents="none"/>)}
         {/* Milestone flash */}
         {phase==="play"&&r.milestoneT>1.85&&(<View style={{...StyleSheet.absoluteFillObject as any,backgroundColor:"rgba(255,255,255,0.28)",opacity:Math.min(1,(r.milestoneT-1.85)*8)}} pointerEvents="none"/>)}
+        {/* Zone transition flash */}
+        {r.zoneFlashT>0&&(<View style={{...StyleSheet.absoluteFillObject as any,backgroundColor:r.zoneFlashCol,opacity:Math.min(1,r.zoneFlashT*4)}} pointerEvents="none"/>)}
 
         {/* HUD */}
         <View style={[s.hud,{paddingTop:topPad}]} pointerEvents="none">
@@ -707,6 +755,13 @@ export default function GameScreen(){
           {mult>1&&r.comboT>0&&<Text style={[s.multTxt,{color:comboCol(r.combo)}]}>×{mult.toFixed(1)}</Text>}
           {r.best>0&&<Text style={[s.bestLabel,{color:zc.txt}]}>BEST  {r.best} m</Text>}
         </View>
+
+        {/* Coin counter (live) */}
+        {phase==="play"&&r.coinsCollected>0&&(
+          <View style={[s.coinHud,{top:topPad+46}]} pointerEvents="none">
+            <Text style={[s.coinHudTxt,{color:zc.txt}]}>🪙 {r.coinsCollected}</Text>
+          </View>
+        )}
 
         {/* Lives */}
         {phase==="play"&&(<View style={[s.livesWrap,{top:topPad+6}]} pointerEvents="none"><LivesDisplay lives={r.lives} dark={zc.dark}/></View>)}
@@ -717,7 +772,7 @@ export default function GameScreen(){
           <TimerBar t={r.magnetT} max={6} col="#C050FF" icon="🧲"/>
         </View>
 
-        {/* Shield badge */}
+        {/* Shield */}
         {phase==="play"&&r.shielded&&(<View style={[s.shieldBadge,{top:topPad+54}]} pointerEvents="none"><Text style={s.shieldTxt}>🛡️</Text></View>)}
 
         {/* Zone label */}
@@ -726,18 +781,10 @@ export default function GameScreen(){
         {/* Height bar */}
         {phase==="play"&&<HeightBar score={r.score} best={r.best} dark={zc.dark} topPad={topPad}/>}
 
-        {/* Stomp flash */}
-        {phase==="play"&&r.stompFlashT>0&&(
-          <View style={s.stompWrap} pointerEvents="none">
-            <Text style={[s.stompTxt,{opacity:Math.min(1,r.stompFlashT*4)}]}>💀  STOMP!</Text>
-          </View>
-        )}
-        {/* Double jump flash */}
-        {phase==="play"&&r.djumpFlashT>0&&(
-          <View style={s.djumpWrap} pointerEvents="none">
-            <Text style={[s.djumpTxt,{opacity:Math.min(1,r.djumpFlashT*3)}]}>↑ DOUBLE JUMP</Text>
-          </View>
-        )}
+        {/* Flash texts */}
+        {phase==="play"&&r.stompFlashT>0&&(<View style={s.stompWrap} pointerEvents="none"><Text style={[s.stompTxt,{opacity:Math.min(1,r.stompFlashT*4)}]}>💀 STOMP!</Text></View>)}
+        {phase==="play"&&r.djumpFlashT>0&&(<View style={s.djumpWrap} pointerEvents="none"><Text style={[s.djumpTxt,{opacity:Math.min(1,r.djumpFlashT*3)}]}>↑ DOUBLE JUMP</Text></View>)}
+
         {/* Combo */}
         {phase==="play"&&r.comboT>0&&r.combo>=3&&(
           <View style={s.comboWrap} pointerEvents="none">
@@ -746,48 +793,55 @@ export default function GameScreen(){
             </Text>
           </View>
         )}
+
         {/* Milestone */}
         {phase==="play"&&r.milestoneT>0&&(
           <View style={s.msWrap} pointerEvents="none">
-            <View style={[s.msPill,{opacity:Math.min(1,r.milestoneT*2)}]}>
-              <Text style={s.msTxt}>🏔  {r.milestoneText}</Text>
-            </View>
+            <View style={[s.msPill,{opacity:Math.min(1,r.milestoneT*2)}]}><Text style={s.msTxt}>🏔  {r.milestoneText}</Text></View>
           </View>
         )}
+
         {/* Hint */}
         {phase==="play"&&r.score===0&&(
           <View style={s.hintWrap} pointerEvents="none">
             <Text style={[s.hintTxt,{color:zc.txt}]}>← left  ·  right →  ·  tap mid-air = double jump</Text>
-            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>land on top of enemies to stomp them  💀</Text>
+            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>land on enemies to stomp 💀  ·  collect power-ups!</Text>
           </View>
         )}
 
-        {/* ── Menu ── */}
+        {/* ── MENU ── */}
         {phase==="menu"&&(
-          <Pressable style={[s.overlay,{backgroundColor:"rgba(245,240,232,0.93)"}]} onPress={startGame}>
+          <Pressable style={[s.overlay,{backgroundColor:"rgba(245,240,232,0.94)"}]} onPress={startGame}>
             <View style={s.titleCard}><Text style={s.t1}>DOODLE</Text><Text style={s.t2}>CLIMB</Text><View style={s.titleBar}/></View>
-            {r.best>0&&<Text style={s.ovBest}>BEST  {r.best} m</Text>}
-            <View style={[s.btn,{marginTop:18}]}><Text style={s.btnTxt}>TAP TO PLAY</Text></View>
-            <Text style={s.ovHint}>3 lives · jetpack · shield · magnet</Text>
-            <Text style={s.ovHint}>stomp enemies · double jump · ← A D →</Text>
+            {leaderboard.length>0&&(
+              <View style={s.lbWrap}>
+                {leaderboard.slice(0,3).map((sc,i)=><LbRow key={i} score={sc} rank={i}/>)}
+              </View>
+            )}
+            <View style={s.btn}><Text style={s.btnTxt}>TAP TO PLAY</Text></View>
+            <Text style={s.ovHint}>3 lives · jetpack · shield · magnet · stomp</Text>
+            <Text style={s.ovHint}>A D / ← → move  ·  Space = double jump</Text>
           </Pressable>
         )}
 
-        {/* ── Game over ── */}
+        {/* ── GAME OVER ── */}
         {phase==="dead"&&(
           <Pressable style={[s.overlay,{backgroundColor:"rgba(6,8,18,0.91)"}]} onPress={startGame}>
             <Text style={s.goLabel}>SCORE</Text>
             <Text style={s.goScore}>{r.score}</Text>
             <Text style={s.goM}>m</Text>
             {r.score>=r.best&&r.score>0&&<Text style={s.newBest}>✦ NEW BEST ✦</Text>}
-            {r.best>r.score&&<Text style={s.ovBestDark}>BEST  {r.best} m</Text>}
-            {/* Stats row */}
             <View style={s.statsRow}>
               <StatPill icon="🪙" val={r.coinsCollected} label="COINS"/>
               <StatPill icon="⚡" val={r.maxCombo} label="COMBO"/>
               <StatPill icon="💀" val={r.enemiesDefeated} label="STOMPED"/>
             </View>
-            <View style={[s.btn,{marginTop:12}]}><Text style={s.btnTxt}>TRY AGAIN</Text></View>
+            {leaderboard.length>0&&(
+              <View style={[s.lbWrap,{borderColor:"rgba(255,255,255,0.12)"}]}>
+                {leaderboard.slice(0,3).map((sc,i)=><LbRow key={i} score={sc} rank={i}/>)}
+              </View>
+            )}
+            <View style={s.btn}><Text style={s.btnTxt}>TRY AGAIN</Text></View>
           </Pressable>
         )}
       </View>
@@ -826,20 +880,22 @@ const g=StyleSheet.create({
   magnetAura: {position:"absolute",top:-12,left:-12,right:-12,bottom:-12,borderRadius:40,borderWidth:2,borderColor:"#C050FF",backgroundColor:"rgba(192,80,255,0.09)",borderStyle:"dashed"},
 });
 const s=StyleSheet.create({
-  root:     {flex:1},
-  hud:      {position:"absolute",top:0,left:0,right:0,alignItems:"center"},
-  scoreNum: {fontSize:56,fontWeight:"900",letterSpacing:-2,lineHeight:60},
-  mLabel:   {fontSize:16,fontWeight:"700",letterSpacing:2,marginTop:-8,opacity:0.55},
-  multTxt:  {fontSize:20,fontWeight:"900",letterSpacing:1,marginTop:2},
-  bestLabel:{fontSize:15,fontWeight:"700",letterSpacing:3,marginTop:2,opacity:0.42},
-  livesWrap:{position:"absolute",right:16},
-  livesRow: {flexDirection:"row",gap:4},
-  heart:    {fontSize:20,fontWeight:"900"},
+  root:       {flex:1},
+  hud:        {position:"absolute",top:0,left:0,right:0,alignItems:"center"},
+  scoreNum:   {fontSize:56,fontWeight:"900",letterSpacing:-2,lineHeight:60},
+  mLabel:     {fontSize:16,fontWeight:"700",letterSpacing:2,marginTop:-8,opacity:0.55},
+  multTxt:    {fontSize:20,fontWeight:"900",letterSpacing:1,marginTop:2},
+  bestLabel:  {fontSize:15,fontWeight:"700",letterSpacing:3,marginTop:2,opacity:0.42},
+  coinHud:    {position:"absolute",left:16},
+  coinHudTxt: {fontSize:14,fontWeight:"700",opacity:0.80},
+  livesWrap:  {position:"absolute",right:16},
+  livesRow:   {flexDirection:"row",gap:4},
+  heart:      {fontSize:20,fontWeight:"900"},
   timersStack:{position:"absolute",right:16,gap:4},
-  timerRow: {flexDirection:"row",alignItems:"center",gap:6},
-  timerIcon:{fontSize:14},
-  timerTrack:{width:46,height:6,borderRadius:3,overflow:"hidden"},
-  timerFill: {height:"100%",borderRadius:3},
+  timerRow:   {flexDirection:"row",alignItems:"center",gap:6},
+  timerIcon:  {fontSize:14},
+  timerTrack: {width:46,height:6,borderRadius:3,overflow:"hidden"},
+  timerFill:  {height:"100%",borderRadius:3},
   shieldBadge:{position:"absolute",right:16,backgroundColor:"rgba(0,120,220,0.20)",borderRadius:12,paddingHorizontal:8,paddingVertical:4},
   shieldTxt:  {fontSize:18},
   zoneLabel:  {position:"absolute",left:16},
@@ -856,12 +912,16 @@ const s=StyleSheet.create({
   hintWrap:   {position:"absolute",left:0,right:0,bottom:70,alignItems:"center"},
   hintTxt:    {fontSize:12,opacity:0.38,letterSpacing:0.5},
   overlay:    {...StyleSheet.absoluteFillObject,justifyContent:"center",alignItems:"center",gap:10},
-  titleCard:  {alignItems:"center",marginBottom:6},
+  titleCard:  {alignItems:"center",marginBottom:4},
   t1:{fontSize:72,fontWeight:"900",color:"#1A1A2A",letterSpacing:-3,lineHeight:70},
   t2:{fontSize:72,fontWeight:"900",color:P_GREEN,letterSpacing:-3,lineHeight:74},
   titleBar:   {marginTop:8,width:80,height:4,borderRadius:2,backgroundColor:P_GREEN,opacity:0.65},
+  lbWrap:     {alignItems:"center",gap:3,padding:10,borderRadius:14,borderWidth:1,borderColor:"rgba(0,0,0,0.08)",backgroundColor:"rgba(255,255,255,0.12)"},
+  lbRow:      {flexDirection:"row",alignItems:"center",gap:8},
+  lbMedal:    {fontSize:18,width:26,textAlign:"center"},
+  lbScore:    {fontSize:24,fontWeight:"900",color:"#1A1A2A",letterSpacing:-1,minWidth:60},
+  lbM:        {fontSize:14,color:"#1A1A2A",opacity:0.45},
   ovBest:     {fontSize:18,fontWeight:"700",color:"#1A1A2A",opacity:0.50,letterSpacing:3},
-  ovBestDark: {fontSize:18,fontWeight:"700",color:"#90C8FF",opacity:0.65,letterSpacing:3},
   ovHint:     {fontSize:13,color:"#1A1A2A",opacity:0.38,letterSpacing:0.3,marginTop:-4},
   goLabel:    {fontSize:18,fontWeight:"700",color:"#90C8FF",opacity:0.55,letterSpacing:6},
   goScore:    {fontSize:92,fontWeight:"900",color:P_GREEN,letterSpacing:-4,lineHeight:96},
