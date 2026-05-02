@@ -1,12 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  Dimensions,
-  Pressable,
-  Platform,
-} from "react-native";
+import { View, Text, StyleSheet, Dimensions, Pressable, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 
@@ -15,741 +8,818 @@ const { width: SW, height: SH } = Dimensions.get("window");
 // ─── Physics ──────────────────────────────────────────────────────────────────
 const GRAVITY    = 1750;
 const JUMP_VEL   = -690;
-const SPRING_VEL = -1150;
+const SPRING_VEL = -1155;
+const DJUMP_VEL  = -570;    // double-jump (a bit weaker)
+const JETPACK_VY = -345;    // sustained jetpack upward velocity
 const PLAYER_SPD = 248;
 const FALL_MULT  = 1.88;
-
-const PW = 42;
-const PH = 50;
-const PLH = 14;
-
+const PW = 42; const PH = 50; const PLH = 14;
 const CAM_LEAD  = 0.38;
-const DEATH_OFF = 300;
+const DEATH_OFF = 350;
 const TRAIL_LEN = 7;
 
-// ─── Altitude zone defs ────────────────────────────────────────────────────────
-// Each zone: score threshold, sky RGB, line RGB, line opacity, text RGB, isDark
-const ZONES = [
-  { at: 0,   sky: [245,240,232] as C3, line: [160,200,232] as C3, lop: 0.30, txt: [26,26,42]    as C3, dark: false, label: "☁  Sunrise"  },
-  { at: 150, sky: [238,190,148] as C3, line: [200,120,70]  as C3, lop: 0.35, txt: [55,20,5]     as C3, dark: false, label: "🌅  Sunset"   },
-  { at: 400, sky: [18,28,60]    as C3, line: [55,95,135]   as C3, lop: 0.45, txt: [200,228,255] as C3, dark: true,  label: "🌙  Night Sky" },
-  { at: 800, sky: [6, 8, 18]    as C3, line: [20,45,80]    as C3, lop: 0.55, txt: [90,170,255]  as C3, dark: true,  label: "🚀  Deep Space"},
-] as const;
-
+// ─── Altitude zone palette ────────────────────────────────────────────────────
 type C3 = readonly [number, number, number];
+const ZONES = [
+  { at: 0,   sky: [245,240,232] as C3, line: [160,200,232] as C3, lop: 0.30, txt: [26,26,42]    as C3, dark: false, label: "☁  Sunrise"   },
+  { at: 150, sky: [238,190,148] as C3, line: [200,120,70]  as C3, lop: 0.35, txt: [55,20,5]     as C3, dark: false, label: "🌅  Sunset"    },
+  { at: 400, sky: [18,28,60]    as C3, line: [55,95,135]   as C3, lop: 0.45, txt: [200,228,255] as C3, dark: true,  label: "🌙  Night Sky" },
+  { at: 800, sky: [6,8,18]      as C3, line: [20,45,80]    as C3, lop: 0.55, txt: [90,170,255]  as C3, dark: true,  label: "🚀  Deep Space"},
+] as const;
 
 function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
 function lerpC(c1: C3, c2: C3, t: number): string {
   return `rgb(${Math.round(lerp(c1[0],c2[0],t))},${Math.round(lerp(c1[1],c2[1],t))},${Math.round(lerp(c1[2],c2[2],t))})`;
 }
 function zoneColors(score: number) {
-  let i = ZONES.length - 1;
-  for (let j = 0; j < ZONES.length - 1; j++) {
-    if (score < ZONES[j + 1].at) { i = j; break; }
+  for (let i = 0; i < ZONES.length - 1; i++) {
+    if (score < ZONES[i+1].at) {
+      const t = Math.max(0, Math.min(1, (score - ZONES[i].at) / (ZONES[i+1].at - ZONES[i].at)));
+      const z0 = ZONES[i], z1 = ZONES[i+1];
+      return { sky: lerpC(z0.sky, z1.sky, t), line: lerpC(z0.line, z1.line, t), lop: lerp(z0.lop, z1.lop, t), txt: lerpC(z0.txt, z1.txt, t), dark: t > 0.5 ? z1.dark : z0.dark, label: t > 0.5 ? z1.label : z0.label, rawSky: z0.sky.map((c,j) => Math.round(lerp(c,(z1.sky as any)[j],t))) as [number,number,number] };
+    }
   }
-  if (i === ZONES.length - 1) return { ...ZONES[i], sky: `rgb(${ZONES[i].sky.join(",")})`, line: `rgb(${ZONES[i].line.join(",")})`, txt: `rgb(${ZONES[i].txt.join(",")})`, t: 1 };
-  const z0 = ZONES[i], z1 = ZONES[i + 1];
-  const t = Math.max(0, Math.min(1, (score - z0.at) / (z1.at - z0.at)));
-  return {
-    sky:   lerpC(z0.sky,  z1.sky,  t),
-    line:  lerpC(z0.line, z1.line, t),
-    lop:   lerp(z0.lop, z1.lop, t),
-    txt:   lerpC(z0.txt,  z1.txt,  t),
-    dark:  t > 0.5 ? z1.dark : z0.dark,
-    label: t > 0.5 ? z1.label : z0.label,
-    t,
-  };
+  const z = ZONES[ZONES.length-1];
+  return { sky: lerpC(z.sky, z.sky, 0), line: lerpC(z.line, z.line, 0), lop: z.lop, txt: lerpC(z.txt, z.txt, 0), dark: z.dark, label: z.label, rawSky: [...z.sky] as [number,number,number] };
 }
 
-// ─── Platform colours ──────────────────────────────────────────────────────────
+// ─── Platform colors ──────────────────────────────────────────────────────────
 type PType = "static" | "moving" | "spring" | "breakable";
-const PCOL: Record<PType, string>  = { static: "#2DC968", moving: "#4EAAF5", spring: "#F5D123", breakable: "#F05232" };
-const PBORD: Record<PType, string> = { static: "#1AA850", moving: "#2D88D8", spring: "#D4A800", breakable: "#C83018" };
-const P_GREEN = "#27C063";
-const P_DARK  = "#1E9E50";
+const PCOL:  Record<PType,string> = { static:"#2DC968", moving:"#4EAAF5", spring:"#F5D123", breakable:"#F05232" };
+const PBORD: Record<PType,string> = { static:"#1AA850", moving:"#2D88D8", spring:"#D4A800", breakable:"#C83018" };
+const P_GREEN = "#27C063"; const P_DARK = "#1E9E50";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Phase = "menu" | "play" | "dead";
+type PUType = "jetpack" | "shield";
 
-interface Plat {
-  id: number; x: number; y: number; w: number; type: PType;
-  broken: boolean; ox: number; dir: number; range: number;
-  sq: number; // squeeze anim 0→0.6 then lerp back to 0
-}
-interface Particle { x: number; y: number; vx: number; vy: number; life: number; color: string; r: number; }
-interface TrailPt   { x: number; y: number; }
-interface Cloud     { id: number; x: number; y: number; w: number; h: number; par: number; op: number; }
-interface Coin      { id: number; x: number; y: number; collected: boolean; popT: number; }
+interface Plat    { id:number; x:number; y:number; w:number; type:PType; broken:boolean; ox:number; dir:number; range:number; sq:number; }
+interface Particle{ x:number; y:number; vx:number; vy:number; life:number; color:string; r:number; }
+interface TrailPt  { x:number; y:number; }
+interface Cloud    { id:number; x:number; y:number; w:number; h:number; par:number; op:number; }
+interface Coin     { id:number; x:number; y:number; collected:boolean; popT:number; }
+interface PU       { id:number; x:number; y:number; tp:PUType; col:boolean; bt:number; }  // power-up
+interface Planet   { id:number; x:number; y:number; r:number; c:string; ring:boolean; par:number; }
+interface SShoot   { id:number; sx:number; sy:number; vx:number; vy:number; life:number; }  // shooting star (screen-space)
 
 interface GS {
-  px: number; py: number; pvx: number; pvy: number;
-  psx: number; psy: number; facing: number; eyeY: number; // eye look offset
-  scrollY: number; minY: number; startY: number;
-  score: number; best: number;
-  combo: number; comboT: number;
-  milestoneText: string; milestoneT: number; lastMilestone: number;
-  plats: Plat[]; parts: Particle[]; trail: TrailPt[]; clouds: Cloud[]; coins: Coin[];
-  phase: Phase; input: number;
-  shakeX: number; shakeY: number; shakeT: number;
-  pid: number;
+  px:number; py:number; pvx:number; pvy:number; psx:number; psy:number; facing:number; eyeY:number;
+  scrollY:number; minY:number; startY:number;
+  score:number; best:number;
+  combo:number; comboT:number;
+  lives:number; jetpackT:number; shielded:boolean; canDJump:boolean; invincT:number; djumpFlashT:number;
+  milestoneText:string; milestoneT:number; lastMilestone:number;
+  ssTimer:number;  // shooting-star spawn timer
+  plats:Plat[]; parts:Particle[]; trail:TrailPt[]; clouds:Cloud[];
+  coins:Coin[]; powerUps:PU[]; planets:Planet[]; shootStars:SShoot[];
+  phase:Phase; input:number;
+  shakeX:number; shakeY:number; shakeT:number;
+  pid:number;
 }
 
-// ─── Factory helpers ──────────────────────────────────────────────────────────
-function pickType(score: number): PType {
+// ─── Factories ────────────────────────────────────────────────────────────────
+function pickType(score:number):PType {
   const r = Math.random();
-  if (score < 80)  return r < 0.06 ? "moving" : "static";
-  if (score < 200) return r < 0.09 ? "spring" : r < 0.24 ? "moving" : r < 0.37 ? "breakable" : "static";
-  if (score < 500) return r < 0.13 ? "spring" : r < 0.30 ? "moving" : r < 0.48 ? "breakable" : "static";
-  return r < 0.16 ? "spring" : r < 0.32 ? "moving" : r < 0.53 ? "breakable" : "static";
+  if (score < 80)  return r<0.06?"moving":"static";
+  if (score < 200) return r<0.09?"spring":r<0.24?"moving":r<0.37?"breakable":"static";
+  if (score < 500) return r<0.13?"spring":r<0.30?"moving":r<0.48?"breakable":"static";
+  return r<0.16?"spring":r<0.32?"moving":r<0.53?"breakable":"static";
+}
+function mkPlat(gs:GS, y:number, score:number):Plat {
+  const w = Math.max(48, 92 - score*0.02);
+  const x = Math.random()*(SW-w);
+  return {id:gs.pid++,x,y,w,type:pickType(score),broken:false,ox:x,dir:Math.random()<0.5?1:-1,range:38+Math.random()*55,sq:0};
+}
+function mkStat(gs:GS, y:number, x:number, w:number):Plat {
+  return {id:gs.pid++,x,y,w,type:"static",broken:false,ox:x,dir:1,range:0,sq:0};
+}
+function mkCloud(gs:GS, wy:number):Cloud {
+  return {id:gs.pid++, x:Math.random()*(SW-120), y:wy, w:90+Math.random()*100, h:28+Math.random()*24, par:0.22+Math.random()*0.18, op:0.55+Math.random()*0.35};
+}
+function mkPU(gs:GS, y:number, tp:PUType):PU {
+  return {id:gs.pid++, x:20+Math.random()*(SW-60), y, tp, col:false, bt:0};
+}
+function mkPlanet(gs:GS, wy:number):Planet {
+  const cols = ["#9B5DE5","#F15BB5","#00BBF9","#FF6B6B","#5BC0EB"];
+  return {id:gs.pid++, x:30+Math.random()*(SW-80), y:wy, r:30+Math.random()*40, c:cols[Math.floor(Math.random()*cols.length)], ring:Math.random()<0.6, par:0.10+Math.random()*0.12};
 }
 
-function mkPlat(gs: GS, y: number, score: number): Plat {
-  const w  = Math.max(48, 92 - score * 0.02);
-  const x  = Math.random() * (SW - w);
-  return { id: gs.pid++, x, y, w, type: pickType(score), broken: false, ox: x, dir: Math.random() < 0.5 ? 1 : -1, range: 38 + Math.random() * 55, sq: 0 };
-}
-function mkStatPlat(gs: GS, y: number, x: number, w: number): Plat {
-  return { id: gs.pid++, x, y, w, type: "static", broken: false, ox: x, dir: 1, range: 0, sq: 0 };
-}
-function mkCloud(gs: GS, worldY: number): Cloud {
-  return {
-    id: gs.pid++,
-    x: Math.random() * (SW - 120),
-    y: worldY,
-    w: 90 + Math.random() * 100,
-    h: 28 + Math.random() * 24,
-    par: 0.22 + Math.random() * 0.18, // parallax factor
-    op: 0.55 + Math.random() * 0.35,
-  };
-}
-function mkCoin(gs: GS, x: number, y: number): Coin {
-  return { id: gs.pid++, x, y, collected: false, popT: 0 };
-}
+const MILESTONES = [100,250,500,750,1000,1500,2000,3000];
 
-// ─── Initial state ────────────────────────────────────────────────────────────
-const MILESTONES = [100, 250, 500, 750, 1000, 1500, 2000];
-
-function mkGS(best: number): GS {
-  const startY = SH * 0.70;
-  const gs: GS = {
-    px: SW / 2 - PW / 2, py: startY, pvx: 0, pvy: JUMP_VEL,
-    psx: 1, psy: 1, facing: 1, eyeY: 0,
-    scrollY: 0, minY: startY, startY,
-    score: 0, best,
-    combo: 0, comboT: 0,
-    milestoneText: "", milestoneT: 0, lastMilestone: 0,
-    plats: [], parts: [], trail: [], clouds: [], coins: [],
-    phase: "menu", input: 0,
-    shakeX: 0, shakeY: 0, shakeT: 0,
-    pid: 0,
+function mkGS(best:number):GS {
+  const startY = SH*0.70;
+  const gs:GS = {
+    px:SW/2-PW/2, py:startY, pvx:0, pvy:JUMP_VEL, psx:1, psy:1, facing:1, eyeY:0,
+    scrollY:0, minY:startY, startY,
+    score:0, best,
+    combo:0, comboT:0,
+    lives:3, jetpackT:0, shielded:false, canDJump:true, invincT:0, djumpFlashT:0,
+    milestoneText:"", milestoneT:0, lastMilestone:0,
+    ssTimer:8,
+    plats:[], parts:[], trail:[], clouds:[], coins:[], powerUps:[], planets:[], shootStars:[],
+    phase:"menu", input:0,
+    shakeX:0, shakeY:0, shakeT:0,
+    pid:0,
   };
 
-  // Starting platform right under player
-  gs.plats.push(mkStatPlat(gs, startY + PH, SW / 2 - 52, 104));
-
-  // Easy starter platforms
+  gs.plats.push(mkStat(gs, startY+PH, SW/2-52, 104));
   let y = startY;
-  for (let i = 0; i < 6; i++) {
-    y -= 58 + Math.random() * 26;
-    const w = 80 + Math.random() * 22;
-    const cx = SW * 0.2 + Math.random() * SW * 0.6;
-    gs.plats.push(mkStatPlat(gs, y, cx - w / 2, w));
+  for (let i=0; i<6; i++) {
+    y -= 58+Math.random()*26;
+    const w = 80+Math.random()*22; const cx = SW*0.2+Math.random()*SW*0.6;
+    gs.plats.push(mkStat(gs, y, cx-w/2, w));
   }
-  // Rest of initial platforms
-  for (let i = 0; i < 18; i++) {
-    y -= 70 + Math.random() * 46;
+  for (let i=0; i<18; i++) {
+    y -= 70+Math.random()*46;
     gs.plats.push(mkPlat(gs, y, 0));
-    if (Math.random() < 0.35) {
-      gs.coins.push(mkCoin(gs, gs.plats[gs.plats.length-1].x + 20 + Math.random() * 30, y - 28));
-    }
+    if (Math.random()<0.32) gs.coins.push({id:gs.pid++, x:gs.plats[gs.plats.length-1].x+20+Math.random()*30, y:y-28, collected:false, popT:0});
   }
-
-  // Initial clouds
   let cy = startY;
-  for (let i = 0; i < 8; i++) {
-    cy -= SH * 0.35 + Math.random() * SH * 0.3;
-    gs.clouds.push(mkCloud(gs, cy));
-  }
-
+  for (let i=0; i<8; i++) { cy -= SH*(0.35+Math.random()*0.3); gs.clouds.push(mkCloud(gs, cy)); }
   return gs;
 }
 
 // ─── Particles ────────────────────────────────────────────────────────────────
-function emit(gs: GS, cx: number, cy: number, col: string, n: number) {
-  for (let i = 0; i < n; i++) {
-    const ang = (Math.PI * 2 * i) / n + Math.random() * 0.5;
-    const spd = 65 + Math.random() * 190;
-    gs.parts.push({ x: cx, y: cy, color: col, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd - 85, life: 1, r: 3 + Math.random() * 5 });
+function emit(gs:GS, cx:number, cy:number, col:string, n:number) {
+  for (let i=0; i<n; i++) {
+    const ang=(Math.PI*2*i)/n+Math.random()*0.5, spd=65+Math.random()*190;
+    gs.parts.push({x:cx, y:cy, color:col, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd-85, life:1, r:3+Math.random()*5});
   }
 }
 
-// ─── Game update ──────────────────────────────────────────────────────────────
-function update(gs: GS, dt: number, now: number) {
-  if (gs.phase !== "play") return;
+// ─── Core update ──────────────────────────────────────────────────────────────
+function update(gs:GS, dt:number, now:number) {
+  if (gs.phase!=="play") return;
 
   // Horizontal
   gs.pvx = gs.input * PLAYER_SPD;
-  if (gs.input !== 0) gs.facing = gs.input;
+  if (gs.input!==0) gs.facing = gs.input;
 
-  // Gravity
-  gs.pvy += GRAVITY * (gs.pvy > 0 ? FALL_MULT : 1) * dt;
-  gs.pvy = Math.min(gs.pvy, 1450);
-
-  // Move
-  gs.px += gs.pvx * dt;
-  gs.py += gs.pvy * dt;
-
-  // Wrap
-  if (gs.px + PW < 0) gs.px = SW;
-  if (gs.px > SW)     gs.px = -PW;
-
-  // Eye direction
-  const eyeTarget = gs.pvy < -180 ? -2.5 : gs.pvy > 180 ? 2.5 : 0;
-  gs.eyeY += (eyeTarget - gs.eyeY) * Math.min(1, dt * 8);
-
-  // Trail
-  if (!gs.trail.length || Math.hypot(gs.px - gs.trail[0].x, gs.py - gs.trail[0].y) > 5) {
-    gs.trail.unshift({ x: gs.px + PW / 2, y: gs.py + PH / 2 });
-    if (gs.trail.length > TRAIL_LEN) gs.trail.pop();
+  // Jetpack override
+  if (gs.jetpackT>0) {
+    gs.jetpackT -= dt;
+    gs.pvy += (JETPACK_VY - gs.pvy) * Math.min(1, dt*5);
+    if (Math.random()<0.5) emit(gs, gs.px+PW/2, gs.py+PH+4, Math.random()<0.5?"#FF8800":"#FFE020", 1);
+  } else {
+    gs.pvy += GRAVITY*(gs.pvy>0?FALL_MULT:1)*dt;
+    gs.pvy = Math.min(gs.pvy, 1450);
   }
 
-  // Platform collisions (falling only)
-  if (gs.pvy > 0) {
+  gs.px += gs.pvx*dt; gs.py += gs.pvy*dt;
+  if (gs.px+PW<0) gs.px=SW; if (gs.px>SW) gs.px=-PW;
+
+  // Eye direction
+  gs.eyeY += (( gs.pvy<-180?-2.5:gs.pvy>180?2.5:0 ) - gs.eyeY) * Math.min(1, dt*8);
+
+  // Trail
+  if (!gs.trail.length || Math.hypot(gs.px-gs.trail[0].x, gs.py-gs.trail[0].y)>5) {
+    gs.trail.unshift({x:gs.px+PW/2, y:gs.py+PH/2});
+    if (gs.trail.length>TRAIL_LEN) gs.trail.pop();
+  }
+
+  // Platform collision (falling only)
+  if (gs.pvy>0) {
     for (const p of gs.plats) {
       if (p.broken) continue;
-      const feet = gs.py + PH;
-      if (feet >= p.y && feet <= p.y + PLH + 14 && gs.px + PW > p.x + 4 && gs.px < p.x + p.w - 4) {
-        gs.py = p.y - PH;
-        const sp = p.type === "spring";
-        gs.pvy = sp ? SPRING_VEL : JUMP_VEL;
-        gs.psx = sp ? 1.58 : 1.40;
-        gs.psy = sp ? 0.50 : 0.63;
-        p.sq   = sp ? 0.65 : 0.45; // platform squashes too
-        gs.combo++;
-        gs.comboT = 2.6;
-        const cx = p.x + p.w / 2;
-        emit(gs, cx, p.y, PCOL[p.type], sp ? 14 : 6);
-        if (p.type === "breakable") p.broken = true;
+      const feet=gs.py+PH;
+      if (feet>=p.y && feet<=p.y+PLH+14 && gs.px+PW>p.x+4 && gs.px<p.x+p.w-4) {
+        gs.py=p.y-PH;
+        const sp=p.type==="spring";
+        gs.pvy = sp?SPRING_VEL:JUMP_VEL;
+        gs.psx = sp?1.58:1.40; gs.psy = sp?0.50:0.63;
+        p.sq = sp?0.65:0.45;
+        gs.combo++; gs.comboT=2.6;
+        gs.canDJump = true;
+        emit(gs, p.x+p.w/2, p.y, PCOL[p.type], sp?14:6);
+        if (p.type==="breakable") p.broken=true;
         break;
       }
     }
   }
 
   // Coin collection
-  const pcx = gs.px + PW / 2, pcy = gs.py + PH / 2;
+  const pcx=gs.px+PW/2, pcy=gs.py+PH/2;
   for (const c of gs.coins) {
-    if (c.collected) { c.popT = Math.max(0, c.popT - dt * 3); continue; }
-    if (Math.hypot(pcx - c.x, pcy - c.y) < 22) {
-      c.collected = true;
-      c.popT = 1;
-      gs.score += 5;
+    if (c.collected){c.popT=Math.max(0,c.popT-dt*3); continue;}
+    if (Math.hypot(pcx-c.x, pcy-c.y)<22) {
+      c.collected=true; c.popT=1;
+      gs.score+=5;
       emit(gs, c.x, c.y, "#F5D123", 5);
     }
   }
 
-  // Camera
-  const ideal = gs.py - SH * CAM_LEAD;
-  if (ideal < gs.scrollY) gs.scrollY = ideal;
-
-  // Score + milestones
-  if (gs.py < gs.minY) gs.minY = gs.py;
-  gs.score = Math.max(gs.score, Math.floor((gs.startY - gs.minY) / 5));
-  if (gs.score > gs.best) gs.best = gs.score;
-  for (const m of MILESTONES) {
-    if (gs.score >= m && m > gs.lastMilestone) {
-      gs.lastMilestone = m;
-      gs.milestoneText = `${m} m`;
-      gs.milestoneT = 2.0;
+  // Power-up collection
+  for (const pu of gs.powerUps) {
+    if (pu.col) {pu.bt=Math.max(0,pu.bt-dt); continue;}
+    pu.bt = (pu.bt+dt*2)%(Math.PI*2);
+    if (Math.hypot(pcx-pu.x, pcy-pu.y)<30) {
+      pu.col=true;
+      if (pu.tp==="jetpack") {
+        gs.jetpackT=4.0;
+        emit(gs, pu.x, pu.y, "#FF8800", 18);
+      } else {
+        gs.shielded=true;
+        emit(gs, pu.x, pu.y, "#50A0FF", 18);
+      }
     }
   }
 
-  // Generate platforms
-  const topGenY = gs.scrollY - SH * 0.55;
-  let topY = gs.plats.length ? Math.min(...gs.plats.map((p) => p.y)) : gs.startY;
-  let safe = 0;
-  while (topY > topGenY && safe++ < 25) {
-    const gap = 72 + Math.random() * 48 + Math.min(gs.score * 0.05, 38);
-    topY -= gap;
+  // Camera
+  const ideal=gs.py-SH*CAM_LEAD;
+  if (ideal<gs.scrollY) gs.scrollY=ideal;
+
+  // Score + milestones
+  if (gs.py<gs.minY) gs.minY=gs.py;
+  gs.score = Math.max(gs.score, Math.floor((gs.startY-gs.minY)/5));
+  if (gs.score>gs.best) gs.best=gs.score;
+  for (const m of MILESTONES) {
+    if (gs.score>=m && m>gs.lastMilestone) {
+      gs.lastMilestone=m; gs.milestoneText=`${m} m`; gs.milestoneT=2.2;
+    }
+  }
+
+  // Generate platforms + objects
+  const topGenY=gs.scrollY-SH*0.55;
+  let topY=gs.plats.length?Math.min(...gs.plats.map(p=>p.y)):gs.startY;
+  let safety=0;
+  while (topY>topGenY && safety++<25) {
+    const gap=72+Math.random()*48+Math.min(gs.score*0.05,38);
+    topY-=gap;
     gs.plats.push(mkPlat(gs, topY, gs.score));
-    if (Math.random() < 0.30) gs.coins.push(mkCoin(gs, gs.plats[gs.plats.length-1].x + Math.random() * 50, topY - 30));
+    // Coins
+    if (Math.random()<0.30) gs.coins.push({id:gs.pid++, x:gs.plats[gs.plats.length-1].x+Math.random()*50, y:topY-30, collected:false, popT:0});
+    // Power-ups (rare, only after score 20, max 1 per ~10 platforms)
+    if (gs.score>20 && Math.random()<0.08 && !gs.powerUps.some(p=>!p.col&&Math.abs(p.y-topY)<300)) {
+      gs.powerUps.push(mkPU(gs, topY-45, Math.random()<0.55?"jetpack":"shield"));
+    }
+    // Planets in space zone
+    if (gs.score>600 && Math.random()<0.12 && !gs.planets.some(p=>Math.abs(p.y-topY)<SH*0.6)) {
+      gs.planets.push(mkPlanet(gs, topY+Math.random()*SH*0.5));
+    }
   }
 
-  // Generate clouds
-  const topCloud = gs.clouds.length ? Math.min(...gs.clouds.map((c) => c.y)) : gs.startY;
-  if (topCloud > gs.scrollY - SH * 1.5) {
-    gs.clouds.push(mkCloud(gs, topCloud - SH * (0.4 + Math.random() * 0.5)));
-  }
-
-  // Remove off-screen objects
-  const cutY = gs.scrollY + SH + 280;
-  gs.plats  = gs.plats.filter((p) => p.y < cutY);
-  gs.coins  = gs.coins.filter((c) => c.y < cutY || !c.collected);
-  gs.clouds = gs.clouds.filter((c) => c.y - gs.scrollY * c.par < SH + 150);
+  // Clouds
+  const topCloud=gs.clouds.length?Math.min(...gs.clouds.map(c=>c.y)):gs.startY;
+  if (topCloud>gs.scrollY-SH*1.5) gs.clouds.push(mkCloud(gs, topCloud-SH*(0.4+Math.random()*0.5)));
 
   // Moving platforms
-  for (const p of gs.plats) {
-    if (p.type === "moving") p.x = p.ox + Math.sin(now / 1000 * 1.6 + p.id * 1.3) * p.range;
-  }
+  for (const p of gs.plats) if (p.type==="moving") p.x=p.ox+Math.sin(now/1000*1.6+p.id*1.3)*p.range;
+
+  // Remove out-of-view objects
+  const cutY=gs.scrollY+SH+300;
+  gs.plats     = gs.plats.filter(p=>p.y<cutY);
+  gs.coins     = gs.coins.filter(c=>c.y<cutY||!c.collected);
+  gs.powerUps  = gs.powerUps.filter(p=>p.y<cutY);
+  gs.planets   = gs.planets.filter(p=>p.y-gs.scrollY*p.par<SH+200);
+  gs.clouds    = gs.clouds.filter(c=>c.y-gs.scrollY*c.par<SH+150);
 
   // Particles
-  for (const pt of gs.parts) {
-    pt.x += pt.vx * dt; pt.y += pt.vy * dt;
-    pt.vy += 560 * dt;
-    pt.life -= dt * 2.2;
-  }
-  gs.parts = gs.parts.filter((p) => p.life > 0);
+  for (const pt of gs.parts){pt.x+=pt.vx*dt; pt.y+=pt.vy*dt; pt.vy+=560*dt; pt.life-=dt*2.2;}
+  gs.parts=gs.parts.filter(p=>p.life>0);
 
-  // Squash lerp (player)
-  const sr = 1 - Math.exp(-13 * dt);
-  gs.psx += (1 - gs.psx) * sr;
-  gs.psy += (1 - gs.psy) * sr;
-
-  // Squeeze lerp (platforms)
-  for (const p of gs.plats) p.sq += (0 - p.sq) * Math.min(1, dt * 14);
+  // Squash lerps
+  const sr=1-Math.exp(-13*dt);
+  gs.psx+=(1-gs.psx)*sr; gs.psy+=(1-gs.psy)*sr;
+  for (const p of gs.plats) p.sq+=( 0-p.sq)*Math.min(1,dt*14);
 
   // Shake
-  if (gs.shakeT > 0) {
-    gs.shakeT -= dt;
-    const s = gs.shakeT * 9;
-    gs.shakeX = (Math.random() - 0.5) * s;
-    gs.shakeY = (Math.random() - 0.5) * s;
-  } else { gs.shakeX = 0; gs.shakeY = 0; }
+  if (gs.shakeT>0){gs.shakeT-=dt; const s=gs.shakeT*9; gs.shakeX=(Math.random()-0.5)*s; gs.shakeY=(Math.random()-0.5)*s;}
+  else {gs.shakeX=0; gs.shakeY=0;}
 
-  // Combo / milestone timers
-  if (gs.comboT > 0)    gs.comboT    -= dt;
-  if (gs.milestoneT > 0) gs.milestoneT -= dt;
+  // Timers
+  if (gs.comboT>0)      gs.comboT-=dt;
+  if (gs.milestoneT>0)  gs.milestoneT-=dt;
+  if (gs.invincT>0)     gs.invincT-=dt;
+  if (gs.djumpFlashT>0) gs.djumpFlashT-=dt;
 
-  // Death
-  if (gs.py > gs.scrollY + SH + DEATH_OFF) {
-    gs.phase  = "dead";
-    gs.shakeT = 0.65;
-    emit(gs, gs.px + PW / 2, gs.py, P_GREEN, 24);
+  // Shooting stars (screen-space, night/space zones)
+  if (gs.score>280) {
+    gs.ssTimer-=dt;
+    if (gs.ssTimer<0) {
+      gs.ssTimer=6+Math.random()*6;
+      gs.shootStars.push({id:gs.pid++, sx:Math.random()*SW, sy:Math.random()*SH*0.4, vx:-120-Math.random()*80, vy:80+Math.random()*60, life:1});
+    }
+    for (const ss of gs.shootStars){ss.sx+=ss.vx*dt; ss.sy+=ss.vy*dt; ss.life-=dt*1.4;}
+    gs.shootStars=gs.shootStars.filter(s=>s.life>0&&s.sx>-50);
+  }
+
+  // Death / life-loss
+  if (gs.py>gs.scrollY+SH+DEATH_OFF && gs.invincT<=0) {
+    if (gs.shielded) {
+      // Shield saves!
+      gs.shielded=false; gs.pvy=SPRING_VEL*1.1;
+      gs.py=gs.scrollY+SH*0.55;
+      gs.invincT=2.2; gs.shakeT=0.3;
+      emit(gs, gs.px+PW/2, gs.py, "#50A0FF", 20);
+    } else if (gs.lives>1) {
+      // Lose a life, respawn
+      gs.lives--;
+      gs.pvy=SPRING_VEL; gs.py=gs.scrollY+SH*0.55;
+      gs.invincT=2.5; gs.shakeT=0.45; gs.canDJump=true;
+      emit(gs, gs.px+PW/2, gs.py, "#FF4422", 16);
+    } else {
+      // Game over
+      gs.phase="dead"; gs.shakeT=0.65;
+      emit(gs, gs.px+PW/2, gs.py, P_GREEN, 24);
+    }
   }
 }
 
 // ─── Background ───────────────────────────────────────────────────────────────
 const LINE_SPACING = 44;
-const LINE_COUNT   = Math.ceil(SH / LINE_SPACING) + 3;
-const STAR_SEEDS   = Array.from({ length: 30 }, (_, i) => ({
-  x: (Math.sin(i * 2.39) * 0.5 + 0.5) * SW,
-  y: (Math.cos(i * 1.61) * 0.5 + 0.5) * SH,
-  r: 1 + (i % 3) * 0.8,
+const LINE_COUNT   = Math.ceil(SH/LINE_SPACING)+3;
+const STAR_SEEDS   = Array.from({length:32},(_, i)=>({
+  x: (Math.sin(i*2.39)*0.5+0.5)*SW,
+  y: (Math.cos(i*1.61)*0.5+0.5)*SH,
+  r: 1+(i%3)*0.8,
 }));
 
-function Background({ scrollY, score }: { scrollY: number; score: number }) {
+function Background({scrollY, score}: {scrollY:number; score:number}) {
   const zc = zoneColors(score);
-  const lineOffset = ((scrollY * 0.18) % LINE_SPACING + LINE_SPACING) % LINE_SPACING;
-  const starOp = Math.max(0, Math.min(1, (score - 300) / 180));
-
+  const lineOff = ((scrollY*0.18)%LINE_SPACING+LINE_SPACING)%LINE_SPACING;
+  const starOp  = Math.max(0, Math.min(1,(score-300)/180));
   return (
-    <View style={[StyleSheet.absoluteFillObject, { backgroundColor: zc.sky }]} pointerEvents="none">
-      {/* Ruled lines */}
-      {Array.from({ length: LINE_COUNT }, (_, i) => (
-        <View key={i} style={[b.line, { top: i * LINE_SPACING - LINE_SPACING + lineOffset, backgroundColor: zc.line, opacity: zc.lop }]} />
+    <View style={[StyleSheet.absoluteFillObject,{backgroundColor:zc.sky}]} pointerEvents="none">
+      {Array.from({length:LINE_COUNT},(_,i)=>(
+        <View key={i} style={[b.line,{top:i*LINE_SPACING-LINE_SPACING+lineOff, backgroundColor:zc.line, opacity:zc.lop}]}/>
       ))}
-      {/* Margin line */}
-      <View style={[b.margin, { backgroundColor: zc.dark ? "#203858" : "#E88888", opacity: zc.dark ? 0.35 : 0.24 }]} />
-      {/* Stars (night/space) */}
-      {starOp > 0 && STAR_SEEDS.map((s, i) => {
-        const sy = ((s.y + scrollY * 0.06) % SH + SH) % SH;
-        return <View key={i} style={[b.star, { left: s.x, top: sy, width: s.r * 2, height: s.r * 2, borderRadius: s.r, opacity: starOp * (0.5 + (i % 3) * 0.25) }]} />;
+      <View style={[b.margin,{backgroundColor:zc.dark?"#203858":"#E88888", opacity:zc.dark?0.35:0.24}]}/>
+      {starOp>0 && STAR_SEEDS.map((s,i)=>{
+        const sy=((s.y+scrollY*0.06)%SH+SH)%SH;
+        return <View key={i} style={[b.star,{left:s.x, top:sy, width:s.r*2, height:s.r*2, borderRadius:s.r, opacity:starOp*(0.5+(i%3)*0.25)}]}/>;
       })}
     </View>
   );
 }
 
-// ─── Cloud renderer ───────────────────────────────────────────────────────────
-function CloudLayer({ clouds, scrollY, dark }: { clouds: Cloud[]; scrollY: number; dark: boolean }) {
-  const col = dark ? "rgba(80,120,200," : "rgba(255,255,255,";
+// ─── Clouds + planets background layer ───────────────────────────────────────
+function BgLayer({clouds, planets, shootStars, scrollY, dark, score}: {
+  clouds:Cloud[]; planets:Planet[]; shootStars:SShoot[];
+  scrollY:number; dark:boolean; score:number;
+}) {
+  const zc = zoneColors(score);
+  // Moon (night zone)
+  const moonOp = Math.max(0, Math.min(1,(score-320)/120));
+  const moonSky = `rgb(${zc.rawSky.join(",")})`;
+
+  // Cloud colour
+  const cloudCol = dark?"rgba(80,120,200,":"rgba(255,255,255,";
+
   return (
     <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
-      {clouds.map((c) => {
-        const sy = c.y - scrollY * c.par;
-        if (sy > SH + 80 || sy < -80) return null;
+      {/* Planets */}
+      {planets.map(p=>{
+        const sy = p.y - scrollY*p.par;
+        if (sy>SH+80||sy<-80) return null;
         return (
-          <View key={c.id} style={{ position: "absolute", left: c.x, top: sy, width: c.w, height: c.h, opacity: c.op }}>
-            {/* Main body */}
-            <View style={[b.cloudBody, { width: c.w * 0.75, height: c.h, left: c.w * 0.12, backgroundColor: col + "0.9)" }]} />
-            {/* Top puffs */}
-            <View style={[b.cloudPuff, { width: c.h * 1.1, height: c.h * 1.1, left: c.w * 0.2, top: -c.h * 0.4, backgroundColor: col + "0.85)" }]} />
-            <View style={[b.cloudPuff, { width: c.h * 0.9, height: c.h * 0.9, left: c.w * 0.48, top: -c.h * 0.35, backgroundColor: col + "0.8)"  }]} />
+          <View key={p.id} style={{position:"absolute", left:p.x-p.r, top:sy-p.r, width:p.r*2, height:p.r*2, borderRadius:p.r, backgroundColor:p.c, opacity:0.72, overflow:"visible"}}>
+            {p.ring && (
+              <View style={{position:"absolute", left:-p.r*0.35, right:-p.r*0.35, top:p.r*0.55, bottom:p.r*0.55, borderRadius:p.r*2, borderWidth:4, borderColor:p.c, opacity:0.55, transform:[{scaleY:0.28}]}}/>
+            )}
+            {/* Planet shine */}
+            <View style={{position:"absolute", left:p.r*0.2, top:p.r*0.15, width:p.r*0.5, height:p.r*0.5, borderRadius:p.r*0.25, backgroundColor:"rgba(255,255,255,0.25)"}}/>
           </View>
         );
       })}
+
+      {/* Clouds */}
+      {clouds.map(c=>{
+        const sy=c.y-scrollY*c.par;
+        if (sy>SH+80||sy<-80) return null;
+        return (
+          <View key={c.id} style={{position:"absolute", left:c.x, top:sy, width:c.w, height:c.h, opacity:c.op}}>
+            <View style={[b.cloudBody,{width:c.w*0.75, height:c.h, left:c.w*0.12, backgroundColor:cloudCol+"0.9)"}]}/>
+            <View style={[b.cloudPuff,{width:c.h*1.1, height:c.h*1.1, left:c.w*0.18, top:-c.h*0.4, backgroundColor:cloudCol+"0.85)"}]}/>
+            <View style={[b.cloudPuff,{width:c.h*0.9, height:c.h*0.9, left:c.w*0.48, top:-c.h*0.35, backgroundColor:cloudCol+"0.8)"}]}/>
+          </View>
+        );
+      })}
+
+      {/* Crescent moon */}
+      {moonOp>0 && (
+        <View style={{position:"absolute", right:28, top:120, opacity:moonOp}}>
+          <View style={{width:44, height:44, borderRadius:22, backgroundColor:"#FFF8D8"}}/>
+          <View style={{position:"absolute", left:10, top:-6, width:40, height:40, borderRadius:20, backgroundColor:moonSky}}/>
+          {/* Moon glow */}
+          <View style={{position:"absolute", left:-8, top:-8, right:-8, bottom:-8, borderRadius:36, backgroundColor:"rgba(255,248,216,0.15)"}}/>
+        </View>
+      )}
+
+      {/* Shooting stars */}
+      {shootStars.map(ss=>(
+        <View key={ss.id} style={{position:"absolute", left:ss.sx-1, top:ss.sy-20, width:2, height:28, borderRadius:2, backgroundColor:"white", opacity:ss.life*0.95, transform:[{rotate:"30deg"}]}}/>
+      ))}
     </View>
   );
 }
 
-// ─── Platform component ───────────────────────────────────────────────────────
-const PlatView = React.memo(function PlatView({ p }: { p: Plat }) {
-  const broken = p.broken;
-  const bg   = broken ? "#999" : PCOL[p.type];
-  const bord = broken ? "#777" : PBORD[p.type];
-  const sqSY = 1 - p.sq * 0.44;
+// ─── Platform ─────────────────────────────────────────────────────────────────
+const PlatView = React.memo(function PlatView({p}:{p:Plat}) {
+  const br=p.broken, bg=br?"#999":PCOL[p.type], bord=br?"#777":PBORD[p.type];
   return (
-    <View style={[g.plat, { left: p.x, top: p.y + (PLH * p.sq * 0.22), width: p.w, backgroundColor: bg, borderColor: bord, opacity: broken ? 0.45 : 1, transform: [{ scaleY: sqSY }] }]}>
-      <View style={g.platShine} />
-      {p.type === "spring" && !broken && <View style={g.springWrap}><View style={g.springLine} /><View style={g.springLine} /><View style={g.springLine} /></View>}
-      {p.type === "moving" && !broken && (
-        <View style={g.movingArrows}>
-          <Text style={g.arrowText}>{"◀  ▶"}</Text>
-        </View>
-      )}
+    <View style={[g.plat,{left:p.x, top:p.y+(PLH*p.sq*0.22), width:p.w, backgroundColor:bg, borderColor:bord, opacity:br?0.45:1, transform:[{scaleY:1-p.sq*0.44}]}]}>
+      <View style={g.platShine}/>
+      {p.type==="spring"&&!br&&<View style={g.springWrap}><View style={g.springLine}/><View style={g.springLine}/><View style={g.springLine}/></View>}
+      {p.type==="moving"&&!br&&<View style={g.movArrows}><Text style={g.arrowTxt}>{"◀  ▶"}</Text></View>}
     </View>
   );
 });
 
-// ─── Player component ─────────────────────────────────────────────────────────
-function PlayerView({ gs }: { gs: GS }) {
-  const flip = gs.facing < 0 ? -1 : 1;
-  const ey   = Math.round(gs.eyeY * 10) / 10;
+// ─── Power-up item ────────────────────────────────────────────────────────────
+function PUView({pu}:{pu:PU}) {
+  if (pu.col&&pu.bt<=0) return null;
+  const bob = Math.sin(pu.bt)*6;
+  const col = pu.tp==="jetpack"?"#FF8C00":"#00A0FF";
+  const glw = pu.tp==="jetpack"?"rgba(255,140,0,0.28)":"rgba(0,160,255,0.28)";
+  const icon = pu.tp==="jetpack"?"🚀":"🛡️";
   return (
-    <View style={[g.player, { left: gs.px, top: gs.py, transform: [{ scaleX: gs.psx * flip }, { scaleY: gs.psy }] }]}>
-      <View style={g.playerGlow} />
+    <View style={{position:"absolute", left:pu.x-22, top:pu.y-22+bob, width:44, height:44, borderRadius:22, backgroundColor:glw, borderWidth:2, borderColor:col, alignItems:"center", justifyContent:"center", opacity:pu.col?pu.bt:1}}>
+      <Text style={{fontSize:22}}>{icon}</Text>
+    </View>
+  );
+}
+
+// ─── Coin ─────────────────────────────────────────────────────────────────────
+function CoinView({c}:{c:Coin}) {
+  if (c.collected&&c.popT<=0) return null;
+  return (
+    <View style={{position:"absolute", left:c.x-9, top:c.y-9, width:18, height:18, borderRadius:9, backgroundColor:"#F5D123", borderWidth:2, borderColor:"#D4A800", opacity:c.collected?c.popT:1, transform:[{scale:c.collected?1+(1-c.popT)*0.6:1}], alignItems:"center", justifyContent:"center"}}>
+      <View style={{width:6, height:6, borderRadius:3, backgroundColor:"rgba(255,255,255,0.7)"}}/>
+    </View>
+  );
+}
+
+// ─── Player ───────────────────────────────────────────────────────────────────
+function PlayerView({gs}:{gs:GS}) {
+  const flip = gs.facing<0?-1:1;
+  const ey   = Math.round(gs.eyeY*10)/10;
+  const inv  = gs.invincT>0 && Math.sin(gs.invincT*18)>0;
+  return (
+    <View style={[g.player,{left:gs.px, top:gs.py, transform:[{scaleX:gs.psx*flip},{scaleY:gs.psy}], opacity:inv?0.35:1}]}>
+      <View style={g.playerGlow}/>
       {/* Antennae */}
-      <View style={[g.antenna, { left: PW * 0.28 }]} />
-      <View style={[g.antenna, { right: PW * 0.28 }]} />
+      <View style={[g.antenna,{left:PW*0.26}]}/>
+      <View style={[g.antenna,{right:PW*0.26}]}/>
       {/* Eyes */}
       <View style={g.eyeRow}>
-        <View style={g.eye}><View style={[g.pupil, { marginTop: 2 + ey }]} /><View style={g.eyeShine} /></View>
-        <View style={g.eye}><View style={[g.pupil, { marginTop: 2 + ey }]} /><View style={g.eyeShine} /></View>
+        <View style={g.eye}><View style={[g.pupil,{marginTop:2+ey}]}/><View style={g.eyeShine}/></View>
+        <View style={g.eye}><View style={[g.pupil,{marginTop:2+ey}]}/><View style={g.eyeShine}/></View>
       </View>
-      {/* Mouth */}
-      <View style={[g.mouth, gs.pvy < -50 ? g.mouthHappy : g.mouthNeutral]} />
-      {/* Feet */}
-      <View style={g.feet}><View style={g.foot} /><View style={g.foot} /></View>
+      <View style={[g.mouth,gs.pvy<-50?g.mouthH:g.mouthN]}/>
+      <View style={g.feet}><View style={g.foot}/><View style={g.foot}/></View>
+      {/* Shield bubble */}
+      {gs.shielded&&<View style={g.shield}/>}
     </View>
   );
 }
 
-// ─── Coin component ───────────────────────────────────────────────────────────
-function CoinView({ c }: { c: Coin }) {
-  if (c.collected && c.popT <= 0) return null;
-  const scale = c.collected ? 1 + (1 - c.popT) * 0.6 : 1;
-  const op    = c.collected ? c.popT : 1;
-  return (
-    <View style={{ position: "absolute", left: c.x - 9, top: c.y - 9, width: 18, height: 18, borderRadius: 9, backgroundColor: "#F5D123", borderWidth: 2, borderColor: "#D4A800", opacity: op, transform: [{ scale }], alignItems: "center", justifyContent: "center" }}>
-      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.7)" }} />
-    </View>
-  );
-}
-
-// ─── Shadow helper ────────────────────────────────────────────────────────────
-function PlayerShadow({ gs }: { gs: GS }) {
-  let closest: Plat | null = null, dist = Infinity;
-  const pBottom = gs.py + PH;
+// ─── Player shadow ────────────────────────────────────────────────────────────
+function Shadow({gs}:{gs:GS}) {
+  let cl:Plat|null=null, dist=Infinity;
+  const pb=gs.py+PH;
   for (const p of gs.plats) {
-    if (p.broken || p.y <= pBottom) continue;
-    const d = p.y - pBottom;
-    if (d < 260 && d < dist && gs.px + PW > p.x + 4 && gs.px < p.x + p.w - 4) {
-      dist = d; closest = p;
-    }
+    if (p.broken||p.y<=pb) continue;
+    const d=p.y-pb;
+    if (d<260&&d<dist&&gs.px+PW>p.x+4&&gs.px<p.x+p.w-4){dist=d; cl=p;}
   }
-  if (!closest) return null;
-  const op = 0.38 * (1 - dist / 260);
-  const sw = Math.max(14, PW * 0.85 * (1 - dist / 400));
-  return (
-    <View style={{ position: "absolute", left: gs.px + PW / 2 - sw / 2, top: closest.y - 4, width: sw, height: 6, borderRadius: sw / 2, backgroundColor: "#000", opacity: op }} />
-  );
+  if (!cl) return null;
+  const op=0.38*(1-dist/260), sw=Math.max(14, PW*0.85*(1-dist/400));
+  return <View style={{position:"absolute", left:gs.px+PW/2-sw/2, top:cl.y-4, width:sw, height:6, borderRadius:sw/2, backgroundColor:"#000", opacity:op}}/>;
 }
 
 // ─── Speed lines ──────────────────────────────────────────────────────────────
-function SpeedLines({ gs, textColor, now }: { gs: GS; textColor: string; now: number }) {
-  if (gs.pvy < 520) return null;
-  const intensity = Math.min(1, (gs.pvy - 520) / 700);
-  const t = now / 70;
+function SpeedLines({gs, col, now}:{gs:GS; col:string; now:number}) {
+  if (gs.pvy<520) return null;
+  const intensity=Math.min(1,(gs.pvy-520)/700), t=now/70;
+  return <>
+    {[0,1,2,3,4].map(i=>{
+      const ox=Math.sin(t+i*2.1)*26, len=12+Math.cos(t*0.8+i*1.5)*7;
+      return <View key={i} style={{position:"absolute", left:gs.px+PW/2+ox-1.5, top:gs.py-len-8, width:3, height:len, borderRadius:2, backgroundColor:col, opacity:0.22*intensity}}/>;
+    })}
+  </>;
+}
+
+// ─── Combo color ─────────────────────────────────────────────────────────────
+function comboCol(n:number){return n>=12?"#FF4422":n>=7?"#F5D123":"#50F0AA";}
+
+// ─── Lives display ────────────────────────────────────────────────────────────
+function LivesDisplay({lives, dark}:{lives:number; dark:boolean}) {
   return (
-    <>
-      {[0, 1, 2, 3, 4].map((i) => {
-        const ox  = (Math.sin(t + i * 2.1) * 26);
-        const len = 12 + Math.cos(t * 0.8 + i * 1.5) * 7;
-        return (
-          <View key={i} style={{ position: "absolute", left: gs.px + PW / 2 + ox - 1.5, top: gs.py - len - 8, width: 3, height: len, borderRadius: 2, backgroundColor: textColor, opacity: 0.22 * intensity }} />
-        );
-      })}
-    </>
+    <View style={s.livesRow}>
+      {[0,1,2].map(i=>(
+        <Text key={i} style={[s.heart,{opacity:i<lives?1:0.22, color:i<lives?"#FF4455":dark?"#884455":"#FF4455"}]}>♥</Text>
+      ))}
+    </View>
   );
 }
 
-// ─── Combo colours ────────────────────────────────────────────────────────────
-function comboCol(n: number) {
-  return n >= 12 ? "#FF4422" : n >= 7 ? "#F5D123" : "#50F0AA";
+// ─── Jetpack HUD ──────────────────────────────────────────────────────────────
+function JetpackHUD({t}:{t:number}) {
+  if (t<=0) return null;
+  const pct=Math.max(0,Math.min(1,t/4.0));
+  return (
+    <View style={s.jetpackHud}>
+      <Text style={s.jetpackIcon}>🚀</Text>
+      <View style={s.jetpackBar}>
+        <View style={[s.jetpackFill,{width:`${pct*100}%` as any}]}/>
+      </View>
+    </View>
+  );
 }
 
 // ─── Main game screen ─────────────────────────────────────────────────────────
 export default function GameScreen() {
   const insets   = useSafeAreaInsets();
   const gs       = useRef<GS>(mkGS(0));
-  const [, setT] = useState(0);
+  const [,setT]  = useState(0);
   const rafRef   = useRef<number>(0);
   const prevTs   = useRef<number>(0);
   const nowRef   = useRef<number>(0);
   const [phase, setPhase] = useState<Phase>("menu");
 
-  const loop = useCallback((ts: number) => {
-    if (prevTs.current === 0) prevTs.current = ts;
-    const dt = Math.min((ts - prevTs.current) / 1000, 0.033);
-    prevTs.current = ts;
-    nowRef.current = ts;
+  const loop = useCallback((ts:number)=>{
+    if (prevTs.current===0) prevTs.current=ts;
+    const dt=Math.min((ts-prevTs.current)/1000, 0.033);
+    prevTs.current=ts; nowRef.current=ts;
     update(gs.current, dt, ts);
-    if (gs.current.phase !== phase) setPhase(gs.current.phase);
-    setT((t) => t + 1);
-    rafRef.current = requestAnimationFrame(loop);
-  }, [phase]);
+    if (gs.current.phase!==phase) setPhase(gs.current.phase);
+    setT(t=>t+1);
+    rafRef.current=requestAnimationFrame(loop);
+  },[phase]);
 
-  useEffect(() => {
-    rafRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [loop]);
+  useEffect(()=>{
+    rafRef.current=requestAnimationFrame(loop);
+    return ()=>cancelAnimationFrame(rafRef.current);
+  },[loop]);
 
   // Keyboard (web)
-  useEffect(() => {
-    if (Platform.OS !== "web") return;
-    const dn = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft"  || e.key === "a") gs.current.input = -1;
-      if (e.key === "ArrowRight" || e.key === "d") gs.current.input =  1;
-      if ((e.key === " " || e.key === "Enter") && gs.current.phase !== "play") startGame();
+  useEffect(()=>{
+    if (Platform.OS!=="web") return;
+    const dn=(e:KeyboardEvent)=>{
+      if (e.key==="ArrowLeft"||e.key==="a") gs.current.input=-1;
+      if (e.key==="ArrowRight"||e.key==="d") gs.current.input=1;
+      if ((e.key===" "||e.key==="Enter")&&gs.current.phase!=="play") startGame();
+      // Double jump with space while playing
+      if (e.key===" "&&gs.current.phase==="play") triggerDJump();
     };
-    const up = () => { gs.current.input = 0; };
-    window.addEventListener("keydown", dn);
-    window.addEventListener("keyup",   up);
-    return () => { window.removeEventListener("keydown", dn); window.removeEventListener("keyup", up); };
-  }, []);
+    const up=()=>{gs.current.input=0;};
+    window.addEventListener("keydown",dn); window.addEventListener("keyup",up);
+    return ()=>{window.removeEventListener("keydown",dn); window.removeEventListener("keyup",up);};
+  },[]);
 
-  const startGame = useCallback(() => {
-    const best = gs.current.best;
-    gs.current  = mkGS(best);
-    gs.current.phase = "play";
-    prevTs.current   = 0;
-    setPhase("play");
-  }, []);
+  const triggerDJump = useCallback(()=>{
+    const g=gs.current;
+    if (g.canDJump && g.pvy>60 && g.invincT<=0 && g.jetpackT<=0) {
+      g.pvy=DJUMP_VEL; g.canDJump=false;
+      g.psx=0.80; g.psy=1.24; g.djumpFlashT=0.7;
+      emit(g, g.px+PW/2, g.py+PH, "#50FFBB", 8);
+    }
+  },[]);
 
-  const onTouchStart = useCallback((e: any) => {
-    if (gs.current.phase !== "play") return;
-    gs.current.input = e.nativeEvent.locationX < SW / 2 ? -1 : 1;
-  }, []);
-  const onTouchMove = useCallback((e: any) => {
-    if (gs.current.phase !== "play") return;
-    gs.current.input = e.nativeEvent.locationX < SW / 2 ? -1 : 1;
-  }, []);
-  const onTouchEnd = useCallback(() => { gs.current.input = 0; }, []);
+  const startGame = useCallback(()=>{
+    const best=gs.current.best;
+    gs.current=mkGS(best); gs.current.phase="play";
+    prevTs.current=0; setPhase("play");
+  },[]);
 
-  const r         = gs.current;
-  const zc        = zoneColors(r.score);
-  const webTop    = Platform.OS === "web" ? 67 : 0;
-  const topPad    = insets.top + webTop + 8;
-  const darkMode  = zc.dark;
-  const now       = nowRef.current;
+  const onTouchStart = useCallback((e:any)=>{
+    if (gs.current.phase==="menu"||gs.current.phase==="dead") return;
+    const x=e.nativeEvent.locationX;
+    gs.current.input = x<SW/2?-1:1;
+    triggerDJump();
+  },[triggerDJump]);
+
+  const onTouchMove = useCallback((e:any)=>{
+    if (gs.current.phase!=="play") return;
+    gs.current.input = e.nativeEvent.locationX<SW/2?-1:1;
+  },[]);
+
+  const onTouchEnd = useCallback(()=>{gs.current.input=0;},[]);
+
+  const r       = gs.current;
+  const zc      = zoneColors(r.score);
+  const webTop  = Platform.OS==="web"?67:0;
+  const topPad  = insets.top+webTop+8;
 
   return (
     <View style={s.root}>
-      <StatusBar hidden />
+      <StatusBar hidden/>
+      <Background scrollY={r.scrollY} score={r.score}/>
 
-      {/* ── Notebook background ── */}
-      <Background scrollY={r.scrollY} score={r.score} />
-
-      {/* ── Touch area ── */}
+      {/* Touch area (full screen for menu/game-over tap too) */}
       <View style={StyleSheet.absoluteFillObject} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
 
-        {/* ── Clouds (parallax, behind world) ── */}
-        <CloudLayer clouds={r.clouds} scrollY={r.scrollY} dark={darkMode} />
+        {/* Background decoration layer */}
+        <BgLayer clouds={r.clouds} planets={r.planets} shootStars={r.shootStars} scrollY={r.scrollY} dark={zc.dark} score={r.score}/>
 
-        {/* ── World layer ── */}
-        <View
-          style={[StyleSheet.absoluteFillObject, { transform: [{ translateX: r.shakeX }, { translateY: -r.scrollY + r.shakeY }] }]}
-          pointerEvents="none"
-        >
-          {/* Shadow */}
-          <PlayerShadow gs={r} />
-
-          {/* Platforms */}
-          {r.plats.map((p) => <PlatView key={p.id} p={p} />)}
-
-          {/* Coins */}
-          {r.coins.map((c) => <CoinView key={c.id} c={c} />)}
-
-          {/* Trail */}
-          {r.trail.map((t, i) => (
-            <View key={i} style={{ position: "absolute", left: t.x - PW * 0.22, top: t.y - PH * 0.22, width: PW * 0.44, height: PH * 0.44, borderRadius: PW * 0.22, backgroundColor: P_GREEN, opacity: (1 - i / TRAIL_LEN) * 0.30 }} />
+        {/* World layer */}
+        <View style={[StyleSheet.absoluteFillObject,{transform:[{translateX:r.shakeX},{translateY:-r.scrollY+r.shakeY}]}]} pointerEvents="none">
+          <Shadow gs={r}/>
+          {r.plats.map(p=><PlatView key={p.id} p={p}/>)}
+          {r.powerUps.map(p=><PUView key={p.id} pu={p}/>)}
+          {r.coins.map(c=><CoinView key={c.id} c={c}/>)}
+          {r.trail.map((t,i)=>(
+            <View key={i} style={{position:"absolute", left:t.x-PW*0.22, top:t.y-PH*0.22, width:PW*0.44, height:PH*0.44, borderRadius:PW*0.22, backgroundColor:P_GREEN, opacity:(1-i/TRAIL_LEN)*0.30}}/>
           ))}
-
-          {/* Particles */}
-          {r.parts.map((p, i) => (
-            <View key={i} style={{ position: "absolute", left: p.x - p.r, top: p.y - p.r, width: p.r * 2, height: p.r * 2, borderRadius: p.r, backgroundColor: p.color, opacity: Math.max(0, p.life) }} />
+          {r.parts.map((p,i)=>(
+            <View key={i} style={{position:"absolute", left:p.x-p.r, top:p.y-p.r, width:p.r*2, height:p.r*2, borderRadius:p.r, backgroundColor:p.color, opacity:Math.max(0,p.life)}}/>
           ))}
-
-          {/* Speed lines */}
-          <SpeedLines gs={r} textColor={zc.txt} now={now} />
-
-          {/* Player */}
-          <PlayerView gs={r} />
+          <SpeedLines gs={r} col={zc.txt} now={nowRef.current}/>
+          <PlayerView gs={r}/>
         </View>
 
-        {/* ── HUD ── */}
-        <View style={[s.hud, { paddingTop: topPad }]} pointerEvents="none">
-          <Text style={[s.scoreNum, { color: zc.txt }]}>{r.score}</Text>
-          <Text style={[s.mLabel, { color: zc.txt, opacity: 0.55 }]}>m</Text>
-          {r.best > 0 && <Text style={[s.bestLabel, { color: zc.txt }]}>BEST  {r.best} m</Text>}
+        {/* HUD */}
+        <View style={[s.hud,{paddingTop:topPad}]} pointerEvents="none">
+          <Text style={[s.scoreNum,{color:zc.txt}]}>{r.score}</Text>
+          <Text style={[s.mLabel,{color:zc.txt}]}>m</Text>
+          {r.best>0&&<Text style={[s.bestLabel,{color:zc.txt}]}>BEST  {r.best} m</Text>}
         </View>
+
+        {/* Lives */}
+        {phase==="play"&&(
+          <View style={[s.livesWrap,{top:topPad+6}]} pointerEvents="none">
+            <LivesDisplay lives={r.lives} dark={zc.dark}/>
+          </View>
+        )}
+
+        {/* Jetpack bar */}
+        <View style={[s.jetpackWrap,{top:topPad+54}]} pointerEvents="none">
+          <JetpackHUD t={r.jetpackT}/>
+        </View>
+
+        {/* Shield badge */}
+        {phase==="play"&&r.shielded&&(
+          <View style={[s.shieldBadge,{top:topPad+54, backgroundColor:zc.dark?"rgba(0,120,220,0.25)":"rgba(0,120,220,0.18)"}]} pointerEvents="none">
+            <Text style={s.shieldTxt}>🛡️</Text>
+          </View>
+        )}
 
         {/* Zone label */}
-        {phase === "play" && (
-          <View style={[s.zoneLabel, { top: topPad + 12 }]} pointerEvents="none">
-            <Text style={[s.zoneTxt, { color: zc.txt }]}>{zc.label}</Text>
+        {phase==="play"&&(
+          <View style={[s.zoneLabel,{top:topPad+12}]} pointerEvents="none">
+            <Text style={[s.zoneTxt,{color:zc.txt}]}>{zc.label}</Text>
+          </View>
+        )}
+
+        {/* Double-jump flash */}
+        {phase==="play"&&r.djumpFlashT>0&&(
+          <View style={s.djumpWrap} pointerEvents="none">
+            <Text style={[s.djumpTxt,{opacity:Math.min(1,r.djumpFlashT*3)}]}>↑ DOUBLE JUMP</Text>
           </View>
         )}
 
         {/* Combo */}
-        {phase === "play" && r.comboT > 0 && r.combo >= 3 && (
+        {phase==="play"&&r.comboT>0&&r.combo>=3&&(
           <View style={s.comboWrap} pointerEvents="none">
-            <Text style={[s.comboText, { color: comboCol(r.combo) }]}>
-              {r.combo >= 12 ? `🔥 x${r.combo}` : r.combo >= 7 ? `⚡ x${r.combo}` : `x${r.combo}`}
+            <Text style={[s.comboTxt,{color:comboCol(r.combo)}]}>
+              {r.combo>=12?`🔥 x${r.combo}`:r.combo>=7?`⚡ x${r.combo}`:`x${r.combo}`}
             </Text>
           </View>
         )}
 
-        {/* Milestone banner */}
-        {phase === "play" && r.milestoneT > 0 && (
-          <View style={s.milestoneWrap} pointerEvents="none">
-            <View style={[s.milestonePill, { opacity: Math.min(1, r.milestoneT * 2) }]}>
-              <Text style={s.milestoneTxt}>🏔  {r.milestoneText}</Text>
+        {/* Milestone */}
+        {phase==="play"&&r.milestoneT>0&&(
+          <View style={s.msWrap} pointerEvents="none">
+            <View style={[s.msPill,{opacity:Math.min(1,r.milestoneT*2)}]}>
+              <Text style={s.msTxt}>🏔  {r.milestoneText}</Text>
             </View>
           </View>
         )}
 
         {/* Hint */}
-        {phase === "play" && r.score === 0 && (
+        {phase==="play"&&r.score===0&&(
           <View style={s.hintWrap} pointerEvents="none">
-            <Text style={[s.hintTxt, { color: zc.txt }]}>← tap left  ·  tap right →</Text>
+            <Text style={[s.hintTxt,{color:zc.txt}]}>← tap left  ·  tap right →</Text>
+            <Text style={[s.hintTxt,{color:zc.txt, marginTop:4}]}>tap while airborne = double jump</Text>
           </View>
         )}
 
-        {/* ── Menu ── */}
-        {phase === "menu" && (
-          <View style={[s.overlay, { backgroundColor: "rgba(245,240,232,0.91)" }]}>
+        {/* Menu */}
+        {phase==="menu"&&(
+          <Pressable style={[s.overlay,{backgroundColor:"rgba(245,240,232,0.92)"}]} onPress={startGame}>
             <View style={s.titleCard}>
               <Text style={s.t1}>DOODLE</Text>
               <Text style={s.t2}>CLIMB</Text>
-              <View style={s.titleBar} />
+              <View style={s.titleBar}/>
             </View>
-            {r.best > 0 && <Text style={s.ovBest}>BEST  {r.best} m</Text>}
-            <Pressable onPress={startGame} style={({ pressed }) => [s.btn, pressed && s.btnP]}>
-              <Text style={s.btnTxt}>TAP TO PLAY</Text>
-            </Pressable>
-            <Text style={s.ovHint}>← left half  ·  right half →</Text>
-            <Text style={s.ovHint}>or  A / D  on  keyboard</Text>
-          </View>
+            {r.best>0&&<Text style={s.ovBest}>BEST  {r.best} m</Text>}
+            <View style={[s.btn,{marginTop:20}]}><Text style={s.btnTxt}>TAP TO PLAY</Text></View>
+            <Text style={s.ovHint}>3 lives · power-ups · double jump</Text>
+            <Text style={s.ovHint}>← A / D keys on web →</Text>
+          </Pressable>
         )}
 
-        {/* ── Game Over ── */}
-        {phase === "dead" && (
-          <View style={[s.overlay, { backgroundColor: "rgba(8,10,22,0.88)" }]}>
+        {/* Game over */}
+        {phase==="dead"&&(
+          <Pressable style={[s.overlay,{backgroundColor:"rgba(6,8,18,0.90)"}]} onPress={startGame}>
             <Text style={s.goLabel}>SCORE</Text>
             <Text style={s.goScore}>{r.score}</Text>
             <Text style={s.goM}>m</Text>
-            {r.score >= r.best && r.score > 0 && <Text style={s.newBest}>✦ NEW BEST ✦</Text>}
-            {r.best > r.score  && <Text style={s.ovBestDark}>BEST  {r.best} m</Text>}
-            <Pressable onPress={startGame} style={({ pressed }) => [s.btn, pressed && s.btnP]}>
-              <Text style={s.btnTxt}>TRY AGAIN</Text>
-            </Pressable>
-          </View>
+            {r.score>=r.best&&r.score>0&&<Text style={s.newBest}>✦ NEW BEST ✦</Text>}
+            {r.best>r.score&&<Text style={s.ovBestDark}>BEST  {r.best} m</Text>}
+            <View style={[s.btn,{marginTop:16}]}><Text style={s.btnTxt}>TRY AGAIN</Text></View>
+          </Pressable>
         )}
       </View>
     </View>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Style sheets ─────────────────────────────────────────────────────────────
 const b = StyleSheet.create({
-  line:   { position: "absolute", left: 0, right: 0, height: 1.5 },
-  margin: { position: "absolute", left: 40, top: 0, bottom: 0, width: 1.5 },
-  star:   { position: "absolute", backgroundColor: "#FFFFFF" },
-  cloudBody: { position: "absolute", borderRadius: 30 },
-  cloudPuff: { position: "absolute", borderRadius: 99 },
+  line:      {position:"absolute", left:0, right:0, height:1.5},
+  margin:    {position:"absolute", left:40, top:0, bottom:0, width:1.5},
+  star:      {position:"absolute", backgroundColor:"#FFFFFF"},
+  cloudBody: {position:"absolute", borderRadius:30},
+  cloudPuff: {position:"absolute", borderRadius:99},
 });
 
 const g = StyleSheet.create({
-  plat: {
-    position: "absolute", height: PLH,
-    borderRadius: 8, borderBottomWidth: 3, overflow: "hidden",
-  },
-  platShine: {
-    position: "absolute", top: 0, left: 6, right: 6, height: 4,
-    borderRadius: 3, backgroundColor: "rgba(255,255,255,0.42)",
-  },
-  springWrap: { position: "absolute", top: 2, left: "25%", right: "25%", gap: 1.5 },
-  springLine: { height: 2.5, borderRadius: 1.5, backgroundColor: "rgba(255,255,255,0.58)", marginBottom: 1 },
-  movingArrows: { position: "absolute", inset: 0, alignItems: "center", justifyContent: "center" },
-  arrowText: { fontSize: 7, color: "rgba(255,255,255,0.55)", letterSpacing: 2 },
+  plat:       {position:"absolute", height:PLH, borderRadius:8, borderBottomWidth:3, overflow:"hidden"},
+  platShine:  {position:"absolute", top:0, left:6, right:6, height:4, borderRadius:3, backgroundColor:"rgba(255,255,255,0.42)"},
+  springWrap: {position:"absolute", top:2, left:"25%", right:"25%", gap:1.5},
+  springLine: {height:2.5, borderRadius:1.5, backgroundColor:"rgba(255,255,255,0.58)", marginBottom:1},
+  movArrows:  {position:"absolute", inset:0, alignItems:"center", justifyContent:"center"},
+  arrowTxt:   {fontSize:7, color:"rgba(255,255,255,0.55)", letterSpacing:2},
 
-  player: {
-    position: "absolute", width: PW, height: PH,
-    backgroundColor: P_GREEN, borderRadius: 12,
-    alignItems: "center", paddingTop: 5,
-    borderBottomWidth: 3, borderColor: P_DARK, overflow: "hidden",
-  },
-  playerGlow: {
-    position: "absolute", top: -4, left: -4, right: -4, bottom: -4,
-    borderRadius: 16, backgroundColor: P_GREEN, opacity: 0.16,
-  },
-  antenna: {
-    position: "absolute", top: -8, width: 3, height: 10,
-    borderRadius: 2, backgroundColor: P_DARK,
-  },
-  eyeRow: { flexDirection: "row", gap: 8, marginTop: 4 },
-  eye: { width: 12, height: 12, borderRadius: 6, backgroundColor: "white", justifyContent: "center", alignItems: "center" },
-  pupil: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: "#0A0A1A" },
-  eyeShine: { position: "absolute", top: 1, right: 1, width: 3, height: 3, borderRadius: 1.5, backgroundColor: "white" },
-  mouth: { marginTop: 4, width: 14, height: 5, borderRadius: 3, borderBottomWidth: 2, borderLeftWidth: 1.5, borderRightWidth: 1.5, borderColor: "rgba(255,255,255,0.72)", borderTopWidth: 0 },
-  mouthHappy:   { borderColor: "rgba(255,255,255,0.85)" },
-  mouthNeutral: { borderColor: "rgba(255,255,255,0.55)" },
-  feet: { flexDirection: "row", gap: 8, marginTop: 2 },
-  foot: { width: 8, height: 5, borderRadius: 3, backgroundColor: P_DARK },
+  player:     {position:"absolute", width:PW, height:PH, backgroundColor:P_GREEN, borderRadius:12, alignItems:"center", paddingTop:5, borderBottomWidth:3, borderColor:P_DARK, overflow:"visible"},
+  playerGlow: {position:"absolute", top:-4, left:-4, right:-4, bottom:-4, borderRadius:16, backgroundColor:P_GREEN, opacity:0.16},
+  antenna:    {position:"absolute", top:-9, width:3, height:11, borderRadius:2, backgroundColor:P_DARK},
+  eyeRow:     {flexDirection:"row", gap:8, marginTop:4},
+  eye:        {width:12, height:12, borderRadius:6, backgroundColor:"white", justifyContent:"center", alignItems:"center"},
+  pupil:      {width:5, height:5, borderRadius:2.5, backgroundColor:"#0A0A1A"},
+  eyeShine:   {position:"absolute", top:1, right:1, width:3, height:3, borderRadius:1.5, backgroundColor:"white"},
+  mouth:      {marginTop:4, width:14, height:5, borderRadius:3, borderBottomWidth:2, borderLeftWidth:1.5, borderRightWidth:1.5, borderTopWidth:0},
+  mouthH:     {borderColor:"rgba(255,255,255,0.88)"},
+  mouthN:     {borderColor:"rgba(255,255,255,0.52)"},
+  feet:       {flexDirection:"row", gap:8, marginTop:2},
+  foot:       {width:8, height:5, borderRadius:3, backgroundColor:P_DARK},
+  shield:     {position:"absolute", top:-8, left:-8, right:-8, bottom:-8, borderRadius:36, borderWidth:3, borderColor:"#50AAFF", backgroundColor:"rgba(80,160,255,0.12)"},
 });
 
 const s = StyleSheet.create({
-  root: { flex: 1 },
+  root: {flex:1},
 
   // HUD
-  hud: { position: "absolute", top: 0, left: 0, right: 0, alignItems: "center" },
-  scoreNum: { fontSize: 58, fontWeight: "900", letterSpacing: -2, lineHeight: 62 },
-  mLabel:   { fontSize: 18, fontWeight: "700", letterSpacing: 2, marginTop: -8 },
-  bestLabel: { fontSize: 16, fontWeight: "700", letterSpacing: 3, marginTop: 2, opacity: 0.45 },
+  hud:       {position:"absolute", top:0, left:0, right:0, alignItems:"center"},
+  scoreNum:  {fontSize:56, fontWeight:"900", letterSpacing:-2, lineHeight:60},
+  mLabel:    {fontSize:16, fontWeight:"700", letterSpacing:2, marginTop:-8, opacity:0.55},
+  bestLabel: {fontSize:15, fontWeight:"700", letterSpacing:3, marginTop:2, opacity:0.42},
 
-  zoneLabel: { position: "absolute", left: 16 },
-  zoneTxt:   { fontSize: 12, fontWeight: "700", letterSpacing: 0.5, opacity: 0.55 },
+  // Lives
+  livesWrap: {position:"absolute", right:16},
+  livesRow:  {flexDirection:"row", gap:4},
+  heart:     {fontSize:20, fontWeight:"900"},
+
+  // Jetpack
+  jetpackWrap: {position:"absolute", right:16},
+  jetpackHud:  {flexDirection:"row", alignItems:"center", gap:6},
+  jetpackIcon: {fontSize:16},
+  jetpackBar:  {width:48, height:6, borderRadius:3, backgroundColor:"rgba(255,140,0,0.25)", overflow:"hidden"},
+  jetpackFill: {height:"100%", backgroundColor:"#FF8C00", borderRadius:3},
+
+  // Shield badge
+  shieldBadge: {position:"absolute", right:16, borderRadius:12, paddingHorizontal:8, paddingVertical:4},
+  shieldTxt:   {fontSize:18},
+
+  // Zone label
+  zoneLabel: {position:"absolute", left:16},
+  zoneTxt:   {fontSize:12, fontWeight:"700", opacity:0.55, letterSpacing:0.5},
+
+  // Double jump flash
+  djumpWrap: {position:"absolute", left:0, right:0, top:SH*0.28, alignItems:"center"},
+  djumpTxt:  {fontSize:16, fontWeight:"900", color:"#50FFBB", letterSpacing:2},
 
   // Combo
-  comboWrap: { position: "absolute", left: 0, right: 0, top: SH * 0.33, alignItems: "center" },
-  comboText: { fontSize: 42, fontWeight: "900", letterSpacing: 1, textShadowColor: "rgba(0,0,0,0.2)", textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 6 },
+  comboWrap: {position:"absolute", left:0, right:0, top:SH*0.33, alignItems:"center"},
+  comboTxt:  {fontSize:42, fontWeight:"900", letterSpacing:1, textShadowColor:"rgba(0,0,0,0.2)", textShadowOffset:{width:0,height:2}, textShadowRadius:6},
 
   // Milestone
-  milestoneWrap: { position: "absolute", left: 0, right: 0, top: SH * 0.20, alignItems: "center" },
-  milestonePill: { backgroundColor: "rgba(39,192,99,0.92)", paddingHorizontal: 24, paddingVertical: 10, borderRadius: 30 },
-  milestoneTxt:  { fontSize: 22, fontWeight: "900", color: "white", letterSpacing: 1 },
+  msWrap:  {position:"absolute", left:0, right:0, top:SH*0.20, alignItems:"center"},
+  msPill:  {backgroundColor:"rgba(39,192,99,0.92)", paddingHorizontal:24, paddingVertical:10, borderRadius:30},
+  msTxt:   {fontSize:22, fontWeight:"900", color:"white", letterSpacing:1},
 
   // Hint
-  hintWrap: { position: "absolute", left: 0, right: 0, bottom: 70, alignItems: "center" },
-  hintTxt:  { fontSize: 13, opacity: 0.38, letterSpacing: 0.5 },
+  hintWrap: {position:"absolute", left:0, right:0, bottom:70, alignItems:"center"},
+  hintTxt:  {fontSize:13, opacity:0.38, letterSpacing:0.5},
 
   // Overlays
-  overlay: { ...StyleSheet.absoluteFillObject, justifyContent: "center", alignItems: "center", gap: 12 },
-  titleCard: { alignItems: "center", marginBottom: 8 },
-  t1: { fontSize: 72, fontWeight: "900", color: "#1A1A2A", letterSpacing: -3, lineHeight: 70 },
-  t2: { fontSize: 72, fontWeight: "900", color: P_GREEN,   letterSpacing: -3, lineHeight: 74 },
-  titleBar: { marginTop: 8, width: 80, height: 4, borderRadius: 2, backgroundColor: P_GREEN, opacity: 0.65 },
-  ovBest:     { fontSize: 18, fontWeight: "700", color: "#1A1A2A", opacity: 0.50, letterSpacing: 3 },
-  ovBestDark: { fontSize: 18, fontWeight: "700", color: "#90C8FF", opacity: 0.65, letterSpacing: 3 },
-  ovHint: { fontSize: 13, color: "#1A1A2A", opacity: 0.38, letterSpacing: 0.3, marginTop: -4 },
+  overlay:   {...StyleSheet.absoluteFillObject, justifyContent:"center", alignItems:"center", gap:12},
+  titleCard: {alignItems:"center", marginBottom:8},
+  t1: {fontSize:72, fontWeight:"900", color:"#1A1A2A", letterSpacing:-3, lineHeight:70},
+  t2: {fontSize:72, fontWeight:"900", color:P_GREEN,   letterSpacing:-3, lineHeight:74},
+  titleBar:  {marginTop:8, width:80, height:4, borderRadius:2, backgroundColor:P_GREEN, opacity:0.65},
+  ovBest:     {fontSize:18, fontWeight:"700", color:"#1A1A2A", opacity:0.50, letterSpacing:3},
+  ovBestDark: {fontSize:18, fontWeight:"700", color:"#90C8FF", opacity:0.65, letterSpacing:3},
+  ovHint:     {fontSize:13, color:"#1A1A2A", opacity:0.38, letterSpacing:0.3, marginTop:-4},
 
   // Game over
-  goLabel: { fontSize: 18, fontWeight: "700", color: "#90C8FF", opacity: 0.55, letterSpacing: 6 },
-  goScore: { fontSize: 94, fontWeight: "900", color: P_GREEN, letterSpacing: -4, lineHeight: 98 },
-  goM:     { fontSize: 24, fontWeight: "700", color: P_GREEN, opacity: 0.7, marginTop: -10 },
-  newBest: { fontSize: 22, fontWeight: "900", color: "#F5B820", letterSpacing: 2 },
+  goLabel: {fontSize:18, fontWeight:"700", color:"#90C8FF", opacity:0.55, letterSpacing:6},
+  goScore: {fontSize:92, fontWeight:"900", color:P_GREEN, letterSpacing:-4, lineHeight:96},
+  goM:     {fontSize:22, fontWeight:"700", color:P_GREEN, opacity:0.7, marginTop:-8},
+  newBest: {fontSize:22, fontWeight:"900", color:"#F5B820", letterSpacing:2},
 
   // Button
-  btn:  { backgroundColor: P_GREEN, paddingHorizontal: 44, paddingVertical: 17, borderRadius: 16, borderBottomWidth: 4, borderColor: P_DARK, marginTop: 10 },
-  btnP: { opacity: 0.80, transform: [{ translateY: 2 }] },
-  btnTxt: { fontSize: 22, fontWeight: "900", color: "white", letterSpacing: 2 },
+  btn:   {backgroundColor:P_GREEN, paddingHorizontal:44, paddingVertical:17, borderRadius:16, borderBottomWidth:4, borderColor:P_DARK},
+  btnTxt:{fontSize:22, fontWeight:"900", color:"white", letterSpacing:2},
 });
