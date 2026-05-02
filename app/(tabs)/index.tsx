@@ -73,25 +73,29 @@ function zoneColors(score:number){
     rawSky:[...z.sky] as [number,number,number]};
 }
 
-// ─── Platform colours ─────────────────────────────────────────────────────────
-type PType="static"|"moving"|"spring"|"breakable";
-const PCOL:Record<PType,string>={static:"#2DC968",moving:"#4EAAF5",spring:"#F5D123",breakable:"#F05232"};
-const PBORD:Record<PType,string>={static:"#1AA850",moving:"#2D88D8",spring:"#D4A800",breakable:"#C83018"};
+// ─── Platform & power-up types ────────────────────────────────────────────────
+type PType="static"|"moving"|"spring"|"breakable"|"crumble";
+const PCOL:Record<PType,string>={static:"#2DC968",moving:"#4EAAF5",spring:"#F5D123",breakable:"#F05232",crumble:"#FF6C20"};
+const PBORD:Record<PType,string>={static:"#1AA850",moving:"#2D88D8",spring:"#D4A800",breakable:"#C83018",crumble:"#CC4A10"};
 const P_GREEN="#27C063"; const P_DARK="#1E9E50";
 
-// ─── City silhouette buildings (pre-computed) ─────────────────────────────────
+type PUType="jetpack"|"shield"|"magnet"|"boots";
+const PU_ICON:Record<PUType,string>={jetpack:"🚀",shield:"🛡️",magnet:"🧲",boots:"🥾"};
+const PU_COL:Record<PUType,string>={jetpack:"#FF8C00",shield:"#00A0FF",magnet:"#C050FF",boots:"#FFB020"};
+const PU_GLW:Record<PUType,string>={jetpack:"rgba(255,140,0,0.28)",shield:"rgba(0,160,255,0.28)",magnet:"rgba(192,80,255,0.28)",boots:"rgba(255,176,32,0.28)"};
+
+// ─── City silhouette (pre-computed) ──────────────────────────────────────────
 const CITY_BLDGS = Array.from({length:20},(_,i)=>({
-  x: (i*(SW/11))+Math.sin(i*2.73)*18-24,
-  w: 16+Math.abs(Math.sin(i*1.73))*38,
-  h: 42+Math.abs(Math.cos(i*2.11))*168,
+  x:(i*(SW/11))+Math.sin(i*2.73)*18-24,
+  w:16+Math.abs(Math.sin(i*1.73))*38,
+  h:42+Math.abs(Math.cos(i*2.11))*168,
 }));
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 type Phase="menu"|"play"|"dead";
-type PUType="jetpack"|"shield"|"magnet";
 type EnemyType="bird"|"ghost"|"ufo"|"asteroid";
 
-interface Plat     {id:number;x:number;y:number;w:number;type:PType;broken:boolean;ox:number;dir:number;range:number;sq:number;}
+interface Plat     {id:number;x:number;y:number;w:number;type:PType;broken:boolean;ox:number;dir:number;range:number;sq:number;crumbleT:number;}
 interface Particle {x:number;y:number;vx:number;vy:number;life:number;color:string;r:number;}
 interface TrailPt  {x:number;y:number;}
 interface Cloud    {id:number;x:number;y:number;w:number;h:number;par:number;op:number;}
@@ -102,20 +106,23 @@ interface SShoot   {id:number;sx:number;sy:number;vx:number;vy:number;life:numbe
 interface Enemy    {id:number;x:number;y:number;vx:number;vy:number;type:EnemyType;wt:number;dead:boolean;}
 interface WarpStar {id:number;x:number;y:number;vy:number;r:number;}
 interface TextPop  {id:number;x:number;y:number;vy:number;life:number;text:string;color:string;}
+interface WeatherP {id:number;x:number;y:number;vy:number;vx:number;}
 
 interface GS {
   px:number;py:number;pvx:number;pvy:number;psx:number;psy:number;facing:number;eyeY:number;
   scrollY:number;minY:number;startY:number;
-  score:number;best:number;
+  score:number;best:number;displayScore:number;
   combo:number;comboT:number;maxCombo:number;coinsCollected:number;enemiesDefeated:number;
-  lives:number;jetpackT:number;magnetT:number;shielded:boolean;canDJump:boolean;invincT:number;
-  djumpFlashT:number;stompFlashT:number;
+  coinStreak:number;coinStreakT:number;
+  lives:number;jetpackT:number;magnetT:number;bootsT:number;shielded:boolean;
+  canDJump:boolean;invincT:number;djumpFlashT:number;stompFlashT:number;
   milestoneText:string;milestoneT:number;lastMilestone:number;
   lastZoneIdx:number;zoneFlashT:number;zoneFlashCol:string;
+  windF:number;windT:number;windNextT:number;
   ssTimer:number;
   plats:Plat[];parts:Particle[];trail:TrailPt[];clouds:Cloud[];
   coins:Coin[];powerUps:PU[];planets:Planet[];shootStars:SShoot[];enemies:Enemy[];
-  warpStars:WarpStar[];textPops:TextPop[];
+  warpStars:WarpStar[];textPops:TextPop[];weatherParts:WeatherP[];
   phase:Phase;input:number;
   shakeX:number;shakeY:number;shakeT:number;
   pid:number;
@@ -126,15 +133,15 @@ function pickType(score:number):PType{
   const r=Math.random();
   if(score<80) return r<0.06?"moving":"static";
   if(score<200) return r<0.09?"spring":r<0.24?"moving":r<0.37?"breakable":"static";
-  if(score<500) return r<0.13?"spring":r<0.30?"moving":r<0.48?"breakable":"static";
-  return r<0.16?"spring":r<0.32?"moving":r<0.53?"breakable":"static";
+  if(score<500) return r<0.11?"spring":r<0.27?"moving":r<0.42?"breakable":r<0.52?"crumble":"static";
+  return r<0.13?"spring":r<0.28?"moving":r<0.44?"breakable":r<0.57?"crumble":"static";
 }
 function mkPlat(gs:GS,y:number,sc:number):Plat{
   const w=Math.max(48,92-sc*0.02),x=Math.random()*(SW-w);
-  return{id:gs.pid++,x,y,w,type:pickType(sc),broken:false,ox:x,dir:Math.random()<0.5?1:-1,range:38+Math.random()*55,sq:0};
+  return{id:gs.pid++,x,y,w,type:pickType(sc),broken:false,ox:x,dir:Math.random()<0.5?1:-1,range:38+Math.random()*55,sq:0,crumbleT:-1};
 }
 function mkStat(gs:GS,y:number,x:number,w:number):Plat{
-  return{id:gs.pid++,x,y,w,type:"static",broken:false,ox:x,dir:1,range:0,sq:0};
+  return{id:gs.pid++,x,y,w,type:"static",broken:false,ox:x,dir:1,range:0,sq:0,crumbleT:-1};
 }
 function mkCloud(gs:GS,wy:number):Cloud{
   return{id:gs.pid++,x:Math.random()*(SW-120),y:wy,w:90+Math.random()*100,h:28+Math.random()*24,par:0.22+Math.random()*0.18,op:0.55+Math.random()*0.35};
@@ -157,20 +164,22 @@ function mkEnemy(gs:GS,y:number,score:number):Enemy{
 
 const MILESTONES=[100,250,500,750,1000,1500,2000,3000];
 const COMBO_TIERS=[5,10,15,20,30];
-const PU_TYPES:PUType[]=["jetpack","shield","magnet"];
+const PU_TYPES:PUType[]=["jetpack","shield","magnet","boots"];
 
 function mkGS(best:number):GS{
   const startY=SH*0.70;
   const gs:GS={
     px:SW/2-PW/2,py:startY,pvx:0,pvy:JUMP_VEL,psx:1,psy:1,facing:1,eyeY:0,
-    scrollY:0,minY:startY,startY,score:0,best,
+    scrollY:0,minY:startY,startY,score:0,best,displayScore:0,
     combo:0,comboT:0,maxCombo:0,coinsCollected:0,enemiesDefeated:0,
-    lives:3,jetpackT:0,magnetT:0,shielded:false,canDJump:true,invincT:0,djumpFlashT:0,stompFlashT:0,
+    coinStreak:0,coinStreakT:0,
+    lives:3,jetpackT:0,magnetT:0,bootsT:0,shielded:false,canDJump:true,invincT:0,djumpFlashT:0,stompFlashT:0,
     milestoneText:"",milestoneT:0,lastMilestone:0,
     lastZoneIdx:-1,zoneFlashT:0,zoneFlashCol:"",
+    windF:0,windT:0,windNextT:12,
     ssTimer:9,
     plats:[],parts:[],trail:[],clouds:[],coins:[],powerUps:[],planets:[],shootStars:[],enemies:[],
-    warpStars:[],textPops:[],
+    warpStars:[],textPops:[],weatherParts:[],
     phase:"menu",input:0,shakeX:0,shakeY:0,shakeT:0,pid:0,
   };
   gs.plats.push(mkStat(gs,startY+PH,SW/2-52,104));
@@ -182,7 +191,7 @@ function mkGS(best:number):GS{
   return gs;
 }
 
-// ─── Particles ────────────────────────────────────────────────────────────────
+// ─── Particles & helpers ──────────────────────────────────────────────────────
 function emit(gs:GS,cx:number,cy:number,col:string,n:number){
   for(let i=0;i<n;i++){
     const ang=(Math.PI*2*i)/n+Math.random()*0.5,spd=65+Math.random()*190;
@@ -190,7 +199,7 @@ function emit(gs:GS,cx:number,cy:number,col:string,n:number){
   }
 }
 function pop(gs:GS,x:number,y:number,text:string,color:string){
-  gs.textPops.push({id:gs.pid++,x,y,vy:-92,life:1,text,color});
+  gs.textPops.push({id:gs.pid++,x,y,vy:-96,life:1,text,color});
 }
 function comboCol(n:number){return n>=15?"#FF2200":n>=10?"#FF9900":n>=5?"#F5D123":"#50F0AA";}
 function comboMult(n:number){return n>=15?2.5:n>=10?2:n>=5?1.5:1;}
@@ -199,10 +208,22 @@ function comboMult(n:number){return n>=15?2.5:n>=10?2:n>=5?1.5:1;}
 function update(gs:GS,dt:number,now:number){
   if(gs.phase!=="play") return;
 
-  gs.pvx=gs.input*PLAYER_SPD;
+  // Wind force (Night + Space zones)
+  if(gs.score>350){
+    if(gs.windT>0){
+      gs.windT-=dt;
+      if(gs.windT<=0){gs.windF=0;gs.windNextT=9+Math.random()*10;}
+    } else {
+      gs.windNextT-=dt;
+      if(gs.windNextT<=0){gs.windF=(Math.random()<0.5?1:-1)*(52+Math.random()*44);gs.windT=2.2+Math.random()*2.4;}
+    }
+  } else { gs.windF=0;gs.windT=0; }
+
+  // Player movement (wind adds persistent push)
+  gs.pvx=gs.input*PLAYER_SPD+(gs.windT>0&&gs.jetpackT<=0?gs.windF*0.38:0);
   if(gs.input!==0) gs.facing=gs.input;
 
-  // Jetpack
+  // Vertical
   if(gs.jetpackT>0){
     gs.jetpackT-=dt;
     gs.pvy+=(JETPACK_VY-gs.pvy)*Math.min(1,dt*5);
@@ -211,6 +232,7 @@ function update(gs:GS,dt:number,now:number){
     gs.pvy+=GRAVITY*(gs.pvy>0?FALL_MULT:1)*dt;
     gs.pvy=Math.min(gs.pvy,1450);
   }
+  if(gs.bootsT>0) gs.bootsT-=dt;
 
   gs.px+=gs.pvx*dt;gs.py+=gs.pvy*dt;
   if(gs.px+PW<0) gs.px=SW; if(gs.px>SW) gs.px=-PW;
@@ -229,19 +251,33 @@ function update(gs:GS,dt:number,now:number){
       if(feet>=p.y&&feet<=p.y+PLH+14&&gs.px+PW>p.x+4&&gs.px<p.x+p.w-4){
         gs.py=p.y-PH;
         const sp=p.type==="spring";
-        gs.pvy=sp?SPRING_VEL:JUMP_VEL;
-        gs.psx=sp?1.58:1.40;gs.psy=sp?0.50:0.63;p.sq=sp?0.65:0.45;
-        gs.canDJump=true;gs.combo++;gs.comboT=2.8;
+        const bootBoost=gs.bootsT>0&&!sp;
+        gs.pvy=sp?SPRING_VEL:bootBoost?Math.round(SPRING_VEL*0.82):JUMP_VEL;
+        gs.psx=sp?1.58:bootBoost?1.52:1.40;gs.psy=sp?0.50:bootBoost?0.55:0.63;
+        p.sq=sp?0.65:0.45;gs.canDJump=true;gs.combo++;gs.comboT=2.8;
+        gs.coinStreak=0;gs.coinStreakT=0; // landing resets streak timer (not count—coins do that)
         if(gs.combo>gs.maxCombo) gs.maxCombo=gs.combo;
         for(const ct of COMBO_TIERS){if(gs.combo===ct){emit(gs,gs.px+PW/2,gs.py,comboCol(ct),20);gs.shakeT=0.12;break;}}
         emit(gs,p.x+p.w/2,p.y,PCOL[p.type],sp?14:6);
         if(p.type==="breakable") p.broken=true;
+        if(p.type==="crumble"&&p.crumbleT<0) p.crumbleT=0.52;
         break;
       }
     }
   }
 
-  // Magnet + Coins
+  // Crumble timers
+  for(const p of gs.plats){
+    if(p.crumbleT>0){
+      p.crumbleT-=dt;
+      if(p.crumbleT<=0){p.broken=true;emit(gs,p.x+p.w/2,p.y,"#FF6C20",8);}
+    }
+  }
+
+  // Coin streak timer
+  if(gs.coinStreakT>0){gs.coinStreakT-=dt;if(gs.coinStreakT<=0)gs.coinStreak=0;}
+
+  // Magnet + coins
   const pcx=gs.px+PW/2,pcy=gs.py+PH/2;
   if(gs.magnetT>0){
     gs.magnetT-=dt;
@@ -252,9 +288,12 @@ function update(gs:GS,dt:number,now:number){
     if(Math.hypot(pcx-c.x,pcy-c.y)<22){
       c.collected=true;c.popT=1;gs.coinsCollected++;
       const bonus=Math.round(5*comboMult(gs.combo));
-      gs.score+=bonus;
-      emit(gs,c.x,c.y,"#F5D123",5);
-      pop(gs,c.x,c.y-10,`+${bonus}`,"#F5D123");
+      gs.score+=bonus;emit(gs,c.x,c.y,"#F5D123",5);pop(gs,c.x,c.y-10,`+${bonus}`,"#F5D123");
+      // Coin streak
+      gs.coinStreak++;gs.coinStreakT=2.2;
+      if(gs.coinStreak===3){gs.score+=5;pop(gs,c.x,c.y-28,"×3 STREAK! +5","#FFD700");}
+      else if(gs.coinStreak===5){gs.score+=12;pop(gs,c.x,c.y-28,"🔥 ×5 STREAK! +12","#FF9900");emit(gs,c.x,c.y,"#FFD700",12);}
+      else if(gs.coinStreak===10){gs.score+=28;pop(gs,c.x,c.y-28,"⚡ ×10 STREAK! +28","#FF4400");emit(gs,c.x,c.y,"#FF8800",22);gs.shakeT=0.15;}
     }
   }
 
@@ -264,35 +303,34 @@ function update(gs:GS,dt:number,now:number){
     pu.bt=(pu.bt+dt*2)%(Math.PI*2);
     if(Math.hypot(pcx-pu.x,pcy-pu.y)<30){
       pu.col=true;
-      if(pu.tp==="jetpack"){gs.jetpackT=4.0;emit(gs,pu.x,pu.y,"#FF8800",18);}
-      else if(pu.tp==="shield"){gs.shielded=true;emit(gs,pu.x,pu.y,"#50A0FF",18);}
-      else{gs.magnetT=6.0;emit(gs,pu.x,pu.y,"#C050FF",18);}
+      if(pu.tp==="jetpack"){gs.jetpackT=4.0;emit(gs,pu.x,pu.y,"#FF8800",18);pop(gs,pu.x,pu.y-22,"JETPACK!","#FF8C00");}
+      else if(pu.tp==="shield"){gs.shielded=true;emit(gs,pu.x,pu.y,"#50A0FF",18);pop(gs,pu.x,pu.y-22,"SHIELD!","#00A0FF");}
+      else if(pu.tp==="magnet"){gs.magnetT=6.0;emit(gs,pu.x,pu.y,"#C050FF",18);pop(gs,pu.x,pu.y-22,"MAGNET!","#C050FF");}
+      else{gs.bootsT=5.0;emit(gs,pu.x,pu.y,"#FFB020",18);pop(gs,pu.x,pu.y-22,"BOUNCE BOOTS!","#FFB020");}
     }
   }
 
-  // Enemies
+  // Enemies move
   for(const e of gs.enemies){if(e.dead)continue;e.x+=e.vx*dt;e.y+=e.vy*dt;e.wt+=dt;if(e.type==="ghost"||e.type==="ufo")e.y+=Math.sin(e.wt*2.5)*28*dt;}
+
+  // Enemy collision — stomp first, then side-hit
   if(gs.invincT<=0){
     const EW=36,EH=30;
     for(const e of gs.enemies){
       if(e.dead) continue;
-      const overX=gs.px+PW>e.x+5&&gs.px<e.x+EW-5;
-      if(!overX) continue;
+      const overX=gs.px+PW>e.x+5&&gs.px<e.x+EW-5;if(!overX) continue;
       const feet=gs.py+PH;
       if(gs.pvy>0&&feet>=e.y-2&&feet<=e.y+EH*0.42){
         e.dead=true;gs.pvy=JUMP_VEL*0.88;gs.py=e.y-PH;
         gs.psx=1.45;gs.psy=0.60;gs.canDJump=true;
-        gs.combo++;gs.comboT=2.8;gs.stompFlashT=0.65;
-        gs.enemiesDefeated++;gs.score+=15;
+        gs.combo++;gs.comboT=2.8;gs.stompFlashT=0.65;gs.enemiesDefeated++;gs.score+=15;
         if(gs.combo>gs.maxCombo) gs.maxCombo=gs.combo;
-        emit(gs,e.x+EW/2,e.y,"#FF8844",20);
-        pop(gs,e.x+EW/2,e.y-12,"+15 STOMP!","#FF8844");
-        gs.shakeT=0.10;break;
+        emit(gs,e.x+EW/2,e.y,"#FF8844",20);pop(gs,e.x+EW/2,e.y-14,"+15 STOMP!","#FF8844");gs.shakeT=0.10;break;
       }
       if(feet>e.y+EH*0.35&&gs.py<e.y+EH-5){
         e.dead=true;emit(gs,e.x+EW/2,e.y,"#FF5533",14);
         if(gs.shielded){gs.shielded=false;gs.invincT=1.5;gs.enemiesDefeated++;}
-        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.2;gs.shakeT=0.4;}
+        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.2;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;}
         else{gs.phase="dead";gs.shakeT=0.7;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
         break;
       }
@@ -309,20 +347,18 @@ function update(gs:GS,dt:number,now:number){
   if(gs.score>gs.best){gs.best=gs.score;saveBest(gs.best);}
   for(const m of MILESTONES){if(gs.score>=m&&m>gs.lastMilestone){gs.lastMilestone=m;gs.milestoneText=`${m} m`;gs.milestoneT=2.2;}}
 
+  // Animated display score (smooth count-up)
+  gs.displayScore=Math.min(gs.score,gs.displayScore+(gs.score-gs.displayScore)*Math.min(1,dt*10));
+
   // Zone transition flash
   const cz=zoneIdx(gs.score);
-  if(cz!==gs.lastZoneIdx){
-    if(gs.lastZoneIdx>=0){gs.zoneFlashT=0.75;gs.zoneFlashCol=ZONE_FLASH_COLS[cz];}
-    gs.lastZoneIdx=cz;
-  }
+  if(cz!==gs.lastZoneIdx){if(gs.lastZoneIdx>=0){gs.zoneFlashT=0.75;gs.zoneFlashCol=ZONE_FLASH_COLS[cz];}gs.lastZoneIdx=cz;}
 
   // World generation
   const topGenY=gs.scrollY-SH*0.55;
-  let topY=gs.plats.length?Math.min(...gs.plats.map(p=>p.y)):gs.startY;
-  let safety=0;
+  let topY=gs.plats.length?Math.min(...gs.plats.map(p=>p.y)):gs.startY;let safety=0;
   while(topY>topGenY&&safety++<25){
-    const gap=72+Math.random()*48+Math.min(gs.score*0.05,38);
-    topY-=gap;
+    const gap=72+Math.random()*48+Math.min(gs.score*0.05,38);topY-=gap;
     gs.plats.push(mkPlat(gs,topY,gs.score));
     if(Math.random()<0.30) gs.coins.push({id:gs.pid++,x:gs.plats[gs.plats.length-1].x+Math.random()*50,y:topY-30,collected:false,popT:0});
     if(gs.score>20&&Math.random()<0.08&&!gs.powerUps.some(p=>!p.col&&Math.abs(p.y-topY)<300))
@@ -334,8 +370,6 @@ function update(gs:GS,dt:number,now:number){
   }
   const topCloud=gs.clouds.length?Math.min(...gs.clouds.map(c=>c.y)):gs.startY;
   if(topCloud>gs.scrollY-SH*1.5) gs.clouds.push(mkCloud(gs,topCloud-SH*(0.4+Math.random()*0.5)));
-
-  // Moving platforms
   for(const p of gs.plats) if(p.type==="moving") p.x=p.ox+Math.sin(now/1000*1.6+p.id*1.3)*p.range;
 
   // Shooting stars
@@ -346,7 +380,7 @@ function update(gs:GS,dt:number,now:number){
     gs.shootStars=gs.shootStars.filter(s=>s.life>0&&s.sx>-60);
   }
 
-  // Warp stars (space zone, screen-space particles)
+  // Warp stars (space zone, screen-space)
   if(gs.score>750){
     const depth=Math.min(1,(gs.score-750)/300);
     if(Math.random()<depth*14*dt) gs.warpStars.push({id:gs.pid++,x:Math.random()*SW,y:SH+10,vy:-(320+Math.random()*680*(1+depth)),r:0.6+Math.random()*1.8});
@@ -354,11 +388,25 @@ function update(gs:GS,dt:number,now:number){
     gs.warpStars=gs.warpStars.filter(ws=>ws.y>-24);
   } else { if(gs.warpStars.length) gs.warpStars=[]; }
 
-  // Particles
+  // Weather particles (screen-space: rain in sunrise/sunset, snow in night)
+  const rainActive=gs.score>=30&&gs.score<380;
+  const snowActive=gs.score>=420&&gs.score<800;
+  if(rainActive||snowActive){
+    const rate=rainActive?7:2.5;
+    if(Math.random()<rate*dt){
+      gs.weatherParts.push({id:gs.pid++,
+        x:Math.random()*SW+(rainActive?-20:0),y:-10,
+        vy:rainActive?310+Math.random()*140:58+Math.random()*42,
+        vx:rainActive?(gs.windF||15)*0.22+(Math.random()-0.3)*12:(Math.random()-0.5)*32,
+      });
+    }
+    for(const wp of gs.weatherParts){wp.x+=wp.vx*dt;wp.y+=wp.vy*dt;}
+    gs.weatherParts=gs.weatherParts.filter(wp=>wp.y<SH+12&&wp.x>-24&&wp.x<SW+24).slice(-90);
+  } else { if(gs.weatherParts.length) gs.weatherParts=[]; }
+
+  // Particles + text pops
   for(const pt of gs.parts){pt.x+=pt.vx*dt;pt.y+=pt.vy*dt;pt.vy+=560*dt;pt.life-=dt*2.2;}
   gs.parts=gs.parts.filter(p=>p.life>0);
-
-  // Text pops
   for(const tp of gs.textPops){tp.y+=tp.vy*dt;tp.vy*=0.92;tp.life-=dt*1.6;}
   gs.textPops=gs.textPops.filter(t=>t.life>0);
 
@@ -369,12 +417,12 @@ function update(gs:GS,dt:number,now:number){
   if(gs.shakeT>0){gs.shakeT-=dt;const s=gs.shakeT*9;gs.shakeX=(Math.random()-0.5)*s;gs.shakeY=(Math.random()-0.5)*s;}else{gs.shakeX=0;gs.shakeY=0;}
 
   // Timers
-  if(gs.comboT>0)       gs.comboT-=dt;
-  if(gs.milestoneT>0)   gs.milestoneT-=dt;
-  if(gs.invincT>0)      gs.invincT-=dt;
-  if(gs.djumpFlashT>0)  gs.djumpFlashT-=dt;
-  if(gs.stompFlashT>0)  gs.stompFlashT-=dt;
-  if(gs.zoneFlashT>0)   gs.zoneFlashT-=dt;
+  if(gs.comboT>0)      gs.comboT-=dt;
+  if(gs.milestoneT>0)  gs.milestoneT-=dt;
+  if(gs.invincT>0)     gs.invincT-=dt;
+  if(gs.djumpFlashT>0) gs.djumpFlashT-=dt;
+  if(gs.stompFlashT>0) gs.stompFlashT-=dt;
+  if(gs.zoneFlashT>0)  gs.zoneFlashT-=dt;
 
   // Cleanup
   const cutY=gs.scrollY+SH+300;
@@ -388,7 +436,7 @@ function update(gs:GS,dt:number,now:number){
   // Death / life-loss
   if(gs.py>gs.scrollY+SH+DEATH_OFF&&gs.invincT<=0){
     if(gs.shielded){gs.shielded=false;gs.pvy=SPRING_VEL*1.1;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.2;gs.shakeT=0.3;emit(gs,gs.px+PW/2,gs.py,"#50A0FF",20);}
-    else if(gs.lives>1){gs.lives--;gs.pvy=SPRING_VEL;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.5;gs.shakeT=0.45;gs.canDJump=true;emit(gs,gs.px+PW/2,gs.py,"#FF4422",16);}
+    else if(gs.lives>1){gs.lives--;gs.pvy=SPRING_VEL;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.5;gs.shakeT=0.45;gs.canDJump=true;gs.combo=0;gs.comboT=0;emit(gs,gs.px+PW/2,gs.py,"#FF4422",16);}
     else{gs.phase="dead";gs.shakeT=0.65;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
   }
 }
@@ -424,7 +472,7 @@ function Background({scrollY,score}:{scrollY:number;score:number}){
   );
 }
 
-// ─── BgLayer: clouds + planets + city + sun + moon + shooting stars ────────────
+// ─── BgLayer ──────────────────────────────────────────────────────────────────
 function BgLayer({clouds,planets,shootStars,scrollY,dark,score}:{
   clouds:Cloud[];planets:Planet[];shootStars:SShoot[];scrollY:number;dark:boolean;score:number;
 }){
@@ -442,7 +490,6 @@ function BgLayer({clouds,planets,shootStars,scrollY,dark,score}:{
         <View style={{position:"absolute",left:0,right:0,bottom:0,height:220,opacity:cityOp*0.72}}>
           {CITY_BLDGS.map((bld,i)=>(
             <View key={i} style={{position:"absolute",left:bld.x,bottom:0,width:bld.w,height:bld.h,backgroundColor:dark?"rgba(10,15,35,0.9)":"rgba(28,18,10,0.52)"}}>
-              {/* Lit windows */}
               {Array.from({length:Math.floor(bld.h/28)},(_,j)=>(
                 <View key={j} style={{position:"absolute",left:3,right:3,top:j*28+6,height:8,flexDirection:"row",gap:2}}>
                   <View style={{flex:1,backgroundColor:`rgba(255,220,100,${Math.sin(i*3.7+j*1.9)>0.1?0.45:0.05})`}}/>
@@ -453,7 +500,7 @@ function BgLayer({clouds,planets,shootStars,scrollY,dark,score}:{
           ))}
         </View>
       )}
-      {/* Sunrise sun */}
+      {/* Suns */}
       {riseSunOp>0&&(
         <View style={{position:"absolute",right:22,top:100,opacity:riseSunOp}}>
           <View style={{width:42,height:42,borderRadius:21,backgroundColor:"#FFE840"}}/>
@@ -461,7 +508,6 @@ function BgLayer({clouds,planets,shootStars,scrollY,dark,score}:{
           <View style={{position:"absolute",left:-22,top:-22,right:-22,bottom:-22,borderRadius:70,backgroundColor:"rgba(255,200,40,0.10)"}}/>
         </View>
       )}
-      {/* Sunset sun */}
       {setSunOp>0.05&&(
         <View style={{position:"absolute",right:28,top:SH*0.52,opacity:setSunOp*0.88}}>
           <View style={{width:78,height:78,borderRadius:39,backgroundColor:"#FF7820"}}/>
@@ -473,53 +519,49 @@ function BgLayer({clouds,planets,shootStars,scrollY,dark,score}:{
         </View>
       )}
       {/* Planets */}
-      {planets.map(p=>{
-        const sy=p.y-scrollY*p.par; if(sy>SH+80||sy<-80) return null;
-        return(
-          <View key={p.id} style={{position:"absolute",left:p.x-p.r,top:sy-p.r,width:p.r*2,height:p.r*2,borderRadius:p.r,backgroundColor:p.c,opacity:0.72}}>
-            {p.ring&&<View style={{position:"absolute",left:-p.r*0.35,right:-p.r*0.35,top:p.r*0.5,bottom:p.r*0.5,borderRadius:p.r*2,borderWidth:4,borderColor:p.c,opacity:0.55,transform:[{scaleY:0.28}]}}/>}
-            <View style={{position:"absolute",left:p.r*0.2,top:p.r*0.15,width:p.r*0.5,height:p.r*0.5,borderRadius:p.r*0.25,backgroundColor:"rgba(255,255,255,0.26)"}}/>
-          </View>
-        );
-      })}
-      {/* Clouds */}
-      {clouds.map(c=>{
-        const sy=c.y-scrollY*c.par; if(sy>SH+80||sy<-80) return null;
-        return(
-          <View key={c.id} style={{position:"absolute",left:c.x,top:sy,width:c.w,height:c.h,opacity:c.op}}>
-            <View style={[b.cloudBody,{width:c.w*0.75,height:c.h,left:c.w*0.12,backgroundColor:cc+"0.9)"}]}/>
-            <View style={[b.cloudPuff,{width:c.h*1.1,height:c.h*1.1,left:c.w*0.18,top:-c.h*0.4,backgroundColor:cc+"0.85)"}]}/>
-            <View style={[b.cloudPuff,{width:c.h*0.9,height:c.h*0.9,left:c.w*0.48,top:-c.h*0.35,backgroundColor:cc+"0.8)"}]}/>
-          </View>
-        );
-      })}
-      {/* Moon */}
-      {moonOp>0&&(
-        <View style={{position:"absolute",right:28,top:120,opacity:moonOp}}>
-          <View style={{width:46,height:46,borderRadius:23,backgroundColor:"#FFF8D8"}}/>
-          <View style={{position:"absolute",left:11,top:-7,width:42,height:42,borderRadius:21,backgroundColor:moonSky}}/>
-          <View style={{position:"absolute",left:-9,top:-9,right:-9,bottom:-9,borderRadius:37,backgroundColor:"rgba(255,248,216,0.14)"}}/>
+      {planets.map(p=>{const sy=p.y-scrollY*p.par;if(sy>SH+80||sy<-80)return null;return(
+        <View key={p.id} style={{position:"absolute",left:p.x-p.r,top:sy-p.r,width:p.r*2,height:p.r*2,borderRadius:p.r,backgroundColor:p.c,opacity:0.72}}>
+          {p.ring&&<View style={{position:"absolute",left:-p.r*0.35,right:-p.r*0.35,top:p.r*0.5,bottom:p.r*0.5,borderRadius:p.r*2,borderWidth:4,borderColor:p.c,opacity:0.55,transform:[{scaleY:0.28}]}}/>}
+          <View style={{position:"absolute",left:p.r*0.2,top:p.r*0.15,width:p.r*0.5,height:p.r*0.5,borderRadius:p.r*0.25,backgroundColor:"rgba(255,255,255,0.26)"}}/>
         </View>
-      )}
+      );})}
+      {/* Clouds */}
+      {clouds.map(c=>{const sy=c.y-scrollY*c.par;if(sy>SH+80||sy<-80)return null;return(
+        <View key={c.id} style={{position:"absolute",left:c.x,top:sy,width:c.w,height:c.h,opacity:c.op}}>
+          <View style={[b.cloudBody,{width:c.w*0.75,height:c.h,left:c.w*0.12,backgroundColor:cc+"0.9)"}]}/>
+          <View style={[b.cloudPuff,{width:c.h*1.1,height:c.h*1.1,left:c.w*0.18,top:-c.h*0.4,backgroundColor:cc+"0.85)"}]}/>
+          <View style={[b.cloudPuff,{width:c.h*0.9,height:c.h*0.9,left:c.w*0.48,top:-c.h*0.35,backgroundColor:cc+"0.8)"}]}/>
+        </View>
+      );})}
+      {/* Moon */}
+      {moonOp>0&&(<View style={{position:"absolute",right:28,top:120,opacity:moonOp}}>
+        <View style={{width:46,height:46,borderRadius:23,backgroundColor:"#FFF8D8"}}/>
+        <View style={{position:"absolute",left:11,top:-7,width:42,height:42,borderRadius:21,backgroundColor:moonSky}}/>
+        <View style={{position:"absolute",left:-9,top:-9,right:-9,bottom:-9,borderRadius:37,backgroundColor:"rgba(255,248,216,0.14)"}}/>
+      </View>)}
       {/* Shooting stars */}
-      {shootStars.map(ss=>(
-        <View key={ss.id} style={{position:"absolute",left:ss.sx-1,top:ss.sy-22,width:2,height:30,borderRadius:2,backgroundColor:"white",opacity:ss.life*0.95,transform:[{rotate:"30deg"}]}}/>
-      ))}
+      {shootStars.map(ss=>(<View key={ss.id} style={{position:"absolute",left:ss.sx-1,top:ss.sy-22,width:2,height:30,borderRadius:2,backgroundColor:"white",opacity:ss.life*0.95,transform:[{rotate:"30deg"}]}}/>))}
     </View>
   );
 }
 
-// ─── Platform ─────────────────────────────────────────────────────────────────
-const PlatView=React.memo(function PlatView({p}:{p:Plat}){
-  const br=p.broken,bg=br?"#999":PCOL[p.type],bord=br?"#777":PBORD[p.type];
+// ─── Platform (no memo – crumble needs per-frame shake) ───────────────────────
+function PlatView({p}:{p:Plat}){
+  const crumbling=p.crumbleT>0;
+  const shakeX=crumbling?Math.sin(Date.now()/44)*3.8:0;
+  const br=p.broken;
+  const bg=br?"#999":crumbling?"#FF6C20":PCOL[p.type];
+  const bord=br?"#777":crumbling?"#CC4A10":PBORD[p.type];
+  const op=br?0.45:crumbling?Math.max(0.3,p.crumbleT/0.52):1;
   return(
-    <View style={[g.plat,{left:p.x,top:p.y+(PLH*p.sq*0.22),width:p.w,backgroundColor:bg,borderColor:bord,opacity:br?0.45:1,transform:[{scaleY:1-p.sq*0.44}]}]}>
+    <View style={[g.plat,{left:p.x+shakeX,top:p.y+(PLH*p.sq*0.22),width:p.w,backgroundColor:bg,borderColor:bord,opacity:op,transform:[{scaleY:1-p.sq*0.44}]}]}>
       <View style={g.platShine}/>
       {p.type==="spring"&&!br&&<View style={g.springWrap}><View style={g.springLine}/><View style={g.springLine}/><View style={g.springLine}/></View>}
       {p.type==="moving"&&!br&&<View style={g.movArrows}><Text style={g.arrowTxt}>{"◀  ▶"}</Text></View>}
+      {p.type==="crumble"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:9,color:"rgba(255,255,255,0.65)"}]}>⚠ ⚠ ⚠</Text></View>}
     </View>
   );
-});
+}
 
 // ─── Enemy ────────────────────────────────────────────────────────────────────
 const ENEMY_ICON:Record<EnemyType,string>={bird:"🐦",ghost:"👻",ufo:"🛸",asteroid:"☄️"};
@@ -529,9 +571,6 @@ function EnemyView({e}:{e:Enemy}){
 }
 
 // ─── Power-up ─────────────────────────────────────────────────────────────────
-const PU_ICON:Record<PUType,string>={jetpack:"🚀",shield:"🛡️",magnet:"🧲"};
-const PU_COL:Record<PUType,string>={jetpack:"#FF8C00",shield:"#00A0FF",magnet:"#C050FF"};
-const PU_GLW:Record<PUType,string>={jetpack:"rgba(255,140,0,0.28)",shield:"rgba(0,160,255,0.28)",magnet:"rgba(192,80,255,0.28)"};
 function PUView({pu}:{pu:PU}){
   if(pu.col&&pu.bt<=0) return null;
   const bob=Math.sin(pu.bt)*6;
@@ -568,9 +607,13 @@ function PlayerView({gs,plrBg,plrBrd}:{gs:GS;plrBg:string;plrBrd:string}){
         <View style={g.eye}><View style={[g.pupil,{marginTop:2+ey}]}/><View style={g.eyeShine}/></View>
       </View>
       <View style={[g.mouth,gs.pvy<-50?g.mouthH:g.mouthN]}/>
-      <View style={g.feet}><View style={[g.foot,{backgroundColor:plrBrd}]}/><View style={[g.foot,{backgroundColor:plrBrd}]}/></View>
+      <View style={g.feet}>
+        <View style={[g.foot,{backgroundColor:plrBrd}]}/>
+        <View style={[g.foot,{backgroundColor:plrBrd}]}/>
+      </View>
       {gs.shielded&&<View style={g.shield}/>}
       {gs.magnetT>0&&<View style={g.magnetAura}/>}
+      {gs.bootsT>0&&<View style={g.bootsGlow}/>}
     </View>
   );
 }
@@ -611,14 +654,23 @@ function LivesDisplay({lives,dark}:{lives:number;dark:boolean}){
 }
 function TimerBar({t,max,col,icon}:{t:number;max:number;col:string;icon:string}){
   if(t<=0) return null;
-  return(<View style={s.timerRow}><Text style={s.timerIcon}>{icon}</Text><View style={[s.timerTrack,{backgroundColor:col+"33"}]}><View style={[s.timerFill,{width:`${Math.max(0,Math.min(1,t/max))*100}%` as any,backgroundColor:col}]}/></View></View>);
+  const expiring=t<1.0;
+  const blinkOp=expiring?(Date.now()/130)%1>0.5?0.28:1:1;
+  return(
+    <View style={[s.timerRow,{opacity:blinkOp}]}>
+      <Text style={s.timerIcon}>{icon}</Text>
+      <View style={[s.timerTrack,{backgroundColor:col+"33"}]}>
+        <View style={[s.timerFill,{width:`${Math.max(0,Math.min(1,t/max))*100}%` as any,backgroundColor:col}]}/>
+      </View>
+    </View>
+  );
 }
 function StatPill({icon,val,label}:{icon:string;val:number;label:string}){
   return(<View style={s.statPill}><Text style={s.statIcon}>{icon}</Text><Text style={s.statVal}>{val}</Text><Text style={s.statLabel}>{label}</Text></View>);
 }
-function LbRow({score,rank}:{score:number;rank:number}){
+function LbRow({score,rank,dark}:{score:number;rank:number;dark:boolean}){
   const medals=["🥇","🥈","🥉"];
-  return(<View style={s.lbRow}><Text style={s.lbMedal}>{medals[rank]??""}</Text><Text style={s.lbScore}>{score}</Text><Text style={s.lbM}>m</Text></View>);
+  return(<View style={s.lbRow}><Text style={s.lbMedal}>{medals[rank]??""}</Text><Text style={[s.lbScore,{color:dark?"white":"#1A1A2A"}]}>{score}</Text><Text style={[s.lbM,{color:dark?"rgba(255,255,255,0.45)":"rgba(0,0,0,0.45)"}]}>m</Text></View>);
 }
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
@@ -644,7 +696,6 @@ export default function GameScreen(){
 
   useEffect(()=>{rafRef.current=requestAnimationFrame(loop);return()=>cancelAnimationFrame(rafRef.current);},[loop]);
 
-  // Save leaderboard when game ends
   useEffect(()=>{
     if(phase==="dead") setLeaderboard(addToLeaderboard(gs.current.score));
   },[phase]);
@@ -688,8 +739,10 @@ export default function GameScreen(){
   const fallDark=Math.min(0.30,Math.max(0,r.pvy-620)/3800);
   const mult=comboMult(r.combo);
   const rainbow=r.combo>=10&&r.comboT>0;
+  const rainZone=r.score>=30&&r.score<380;
+  const snowZone=r.score>=420&&r.score<800;
 
-  // Platform target highlight (closest below while falling)
+  // Platform target highlight
   const hlPlatId=(()=>{
     if(r.phase!=="play"||r.pvy<0) return -1;
     const feet=r.py+PH;let best:Plat|null=null,minD=140;
@@ -706,12 +759,10 @@ export default function GameScreen(){
 
         {/* World layer */}
         <View style={[StyleSheet.absoluteFillObject,{transform:[{translateX:r.shakeX},{translateY:-r.scrollY+r.shakeY}]}]} pointerEvents="none">
-          {/* Ground decoration */}
           <View style={{position:"absolute",left:-30,top:r.startY+PH+PLH,right:-30,height:220,backgroundColor:"#7A5C3A"}}>
             <View style={{height:12,backgroundColor:"#3DB060"}}/>
           </View>
           <Shadow gs={r}/>
-          {/* Platform highlight ring */}
           {hlPlatId>=0&&r.plats.filter(p=>p.id===hlPlatId).map(p=>(
             <View key={p.id+"hl"} style={{position:"absolute",left:p.x-5,top:p.y-8,width:p.w+10,height:PLH+16,borderRadius:12,borderWidth:2.5,borderColor:PCOL[p.type],opacity:0.72}}/>
           ))}
@@ -719,47 +770,71 @@ export default function GameScreen(){
           {r.powerUps.map(p=><PUView key={p.id} pu={p}/>)}
           {r.coins.map(c=><CoinView key={c.id} c={c} now={now}/>)}
           {r.enemies.map(e=><EnemyView key={e.id} e={e}/>)}
-          {/* Trail — rainbow when combo ≥ 10 */}
+          {/* Rainbow / normal trail */}
           {r.trail.map((t,i)=>{
             const col=rainbow?hslToRgb((i*52+now/12)%360,90,62):zc.plrBg;
             const op=(1-i/TRAIL_LEN)*(rainbow?0.65:0.28);
             return <View key={i} style={{position:"absolute",left:t.x-PW*0.25,top:t.y-PH*0.25,width:PW*0.5,height:PH*0.5,borderRadius:PW*0.25,backgroundColor:col,opacity:op}}/>;
           })}
-          {r.parts.map((p,i)=>(
-            <View key={i} style={{position:"absolute",left:p.x-p.r,top:p.y-p.r,width:p.r*2,height:p.r*2,borderRadius:p.r,backgroundColor:p.color,opacity:Math.max(0,p.life)}}/>
-          ))}
-          {/* Floating score pop-ups */}
-          {r.textPops.map(tp=>(
-            <Text key={tp.id} style={{position:"absolute",left:tp.x-28,top:tp.y,color:tp.color,fontSize:13,fontWeight:"900",opacity:Math.max(0,tp.life),letterSpacing:0.5,textShadowColor:"rgba(0,0,0,0.35)",textShadowOffset:{width:0,height:1},textShadowRadius:3}}>{tp.text}</Text>
-          ))}
+          {r.parts.map((p,i)=>(<View key={i} style={{position:"absolute",left:p.x-p.r,top:p.y-p.r,width:p.r*2,height:p.r*2,borderRadius:p.r,backgroundColor:p.color,opacity:Math.max(0,p.life)}}/>))}
+          {/* Score pop-ups */}
+          {r.textPops.map(tp=>(<Text key={tp.id} style={{position:"absolute",left:tp.x-30,top:tp.y,color:tp.color,fontSize:13,fontWeight:"900",opacity:Math.max(0,tp.life),letterSpacing:0.5,textShadowColor:"rgba(0,0,0,0.35)",textShadowOffset:{width:0,height:1},textShadowRadius:3}}>{tp.text}</Text>))}
           <SpeedLines gs={r} col={zc.txt} now={now}/>
           <PlayerView gs={r} plrBg={zc.plrBg} plrBrd={zc.plrBrd}/>
         </View>
 
-        {/* Warp stars (screen-space, space zone) */}
+        {/* Weather particles (screen-space) */}
+        {(rainZone||snowZone)&&r.weatherParts.map(wp=>(
+          <View key={wp.id} pointerEvents="none" style={{position:"absolute",left:wp.x,top:wp.y,width:rainZone?1.5:4,height:rainZone?10:4,borderRadius:rainZone?1:2,backgroundColor:rainZone?"rgba(180,200,255,0.42)":"rgba(240,245,255,0.65)",transform:rainZone?[{rotate:"13deg"}]:undefined}}/>
+        ))}
+
+        {/* Warp stars (screen-space) */}
         {r.score>750&&r.warpStars.map(ws=>(
           <View key={ws.id} pointerEvents="none" style={{position:"absolute",left:ws.x-ws.r,top:ws.y-ws.r*7,width:ws.r*2,height:Math.max(ws.r*2,ws.r*12),borderRadius:ws.r,backgroundColor:"rgba(255,255,255,0.82)"}}/>
         ))}
 
-        {/* Fall vignette */}
+        {/* Wind streaks (screen-space) */}
+        {r.windT>0&&[0,1,2,3].map(i=>{
+          const wx=((now/(r.windF>0?5:-5)+i*(SW/4))%SW+SW)%SW;
+          return <View key={i} pointerEvents="none" style={{position:"absolute",left:wx,top:SH*0.15+i*SH*0.18,width:26,height:2,borderRadius:1,backgroundColor:"rgba(200,220,255,0.25)"}}/>;
+        })}
+
+        {/* Enemy warning arrows (screen-space) */}
+        {phase==="play"&&r.enemies.filter(e=>!e.dead).map(e=>{
+          const sy=e.y-r.scrollY;
+          if(sy<-60||sy>SH+60) return null;
+          const offL=e.x+36<0,offR=e.x>SW;
+          if(!offL&&!offR) return null;
+          const blink=Math.sin(now/160)>0;
+          return(<View key={e.id} pointerEvents="none" style={{position:"absolute",left:offL?4:SW-26,top:Math.max(topPad+50,Math.min(SH-60,sy-10)),opacity:blink?0.92:0.22}}>
+            <Text style={{fontSize:16,color:"#FF6644"}}>{offL?"◀":"▶"}</Text>
+          </View>);
+        })}
+
+        {/* Overlays */}
         {phase==="play"&&fallDark>0&&(<View style={{...StyleSheet.absoluteFillObject as any,backgroundColor:`rgba(0,0,0,${fallDark.toFixed(3)})`}} pointerEvents="none"/>)}
-        {/* Milestone flash */}
         {phase==="play"&&r.milestoneT>1.85&&(<View style={{...StyleSheet.absoluteFillObject as any,backgroundColor:"rgba(255,255,255,0.28)",opacity:Math.min(1,(r.milestoneT-1.85)*8)}} pointerEvents="none"/>)}
-        {/* Zone transition flash */}
         {r.zoneFlashT>0&&(<View style={{...StyleSheet.absoluteFillObject as any,backgroundColor:r.zoneFlashCol,opacity:Math.min(1,r.zoneFlashT*4)}} pointerEvents="none"/>)}
 
         {/* HUD */}
         <View style={[s.hud,{paddingTop:topPad}]} pointerEvents="none">
-          <Text style={[s.scoreNum,{color:zc.txt}]}>{r.score}</Text>
+          <Text style={[s.scoreNum,{color:zc.txt}]}>{Math.round(r.displayScore)}</Text>
           <Text style={[s.mLabel,{color:zc.txt}]}>m</Text>
           {mult>1&&r.comboT>0&&<Text style={[s.multTxt,{color:comboCol(r.combo)}]}>×{mult.toFixed(1)}</Text>}
           {r.best>0&&<Text style={[s.bestLabel,{color:zc.txt}]}>BEST  {r.best} m</Text>}
         </View>
 
-        {/* Coin counter (live) */}
+        {/* Coin counter */}
         {phase==="play"&&r.coinsCollected>0&&(
           <View style={[s.coinHud,{top:topPad+46}]} pointerEvents="none">
             <Text style={[s.coinHudTxt,{color:zc.txt}]}>🪙 {r.coinsCollected}</Text>
+          </View>
+        )}
+
+        {/* Wind label */}
+        {phase==="play"&&r.windT>0&&(
+          <View style={[s.coinHud,{top:topPad+66}]} pointerEvents="none">
+            <Text style={[s.coinHudTxt,{color:zc.txt,fontSize:11,opacity:0.50}]}>{r.windF>0?"→ WIND":"WIND ←"}</Text>
           </View>
         )}
 
@@ -769,7 +844,8 @@ export default function GameScreen(){
         {/* Power-up timers */}
         <View style={[s.timersStack,{top:topPad+52}]} pointerEvents="none">
           <TimerBar t={r.jetpackT} max={4} col="#FF8C00" icon="🚀"/>
-          <TimerBar t={r.magnetT} max={6} col="#C050FF" icon="🧲"/>
+          <TimerBar t={r.magnetT}  max={6} col="#C050FF" icon="🧲"/>
+          <TimerBar t={r.bootsT}   max={5} col="#FFB020" icon="🥾"/>
         </View>
 
         {/* Shield */}
@@ -805,7 +881,7 @@ export default function GameScreen(){
         {phase==="play"&&r.score===0&&(
           <View style={s.hintWrap} pointerEvents="none">
             <Text style={[s.hintTxt,{color:zc.txt}]}>← left  ·  right →  ·  tap mid-air = double jump</Text>
-            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>land on enemies to stomp 💀  ·  collect power-ups!</Text>
+            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>stomp enemies 💀  ·  grab power-ups 🚀🛡️🧲🥾</Text>
           </View>
         )}
 
@@ -815,12 +891,12 @@ export default function GameScreen(){
             <View style={s.titleCard}><Text style={s.t1}>DOODLE</Text><Text style={s.t2}>CLIMB</Text><View style={s.titleBar}/></View>
             {leaderboard.length>0&&(
               <View style={s.lbWrap}>
-                {leaderboard.slice(0,3).map((sc,i)=><LbRow key={i} score={sc} rank={i}/>)}
+                {leaderboard.slice(0,3).map((sc,i)=><LbRow key={i} score={sc} rank={i} dark={false}/>)}
               </View>
             )}
             <View style={s.btn}><Text style={s.btnTxt}>TAP TO PLAY</Text></View>
-            <Text style={s.ovHint}>3 lives · jetpack · shield · magnet · stomp</Text>
-            <Text style={s.ovHint}>A D / ← → move  ·  Space = double jump</Text>
+            <Text style={s.ovHint}>jetpack · shield · magnet · bounce boots</Text>
+            <Text style={s.ovHint}>stomp enemies · crumble platforms · wind gusts</Text>
           </Pressable>
         )}
 
@@ -838,7 +914,7 @@ export default function GameScreen(){
             </View>
             {leaderboard.length>0&&(
               <View style={[s.lbWrap,{borderColor:"rgba(255,255,255,0.12)"}]}>
-                {leaderboard.slice(0,3).map((sc,i)=><LbRow key={i} score={sc} rank={i}/>)}
+                {leaderboard.slice(0,3).map((sc,i)=><LbRow key={i} score={sc} rank={i} dark={true}/>)}
               </View>
             )}
             <View style={s.btn}><Text style={s.btnTxt}>TRY AGAIN</Text></View>
@@ -851,87 +927,87 @@ export default function GameScreen(){
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const b=StyleSheet.create({
-  line:      {position:"absolute",left:0,right:0,height:1.5},
-  margin:    {position:"absolute",left:40,top:0,bottom:0,width:1.5},
-  star:      {position:"absolute",backgroundColor:"#FFFFFF"},
-  cloudBody: {position:"absolute",borderRadius:30},
-  cloudPuff: {position:"absolute",borderRadius:99},
+  line:     {position:"absolute",left:0,right:0,height:1.5},
+  margin:   {position:"absolute",left:40,top:0,bottom:0,width:1.5},
+  star:     {position:"absolute",backgroundColor:"#FFFFFF"},
+  cloudBody:{position:"absolute",borderRadius:30},
+  cloudPuff:{position:"absolute",borderRadius:99},
 });
 const g=StyleSheet.create({
-  plat:       {position:"absolute",height:PLH,borderRadius:8,borderBottomWidth:3,overflow:"hidden"},
-  platShine:  {position:"absolute",top:0,left:6,right:6,height:4,borderRadius:3,backgroundColor:"rgba(255,255,255,0.42)"},
-  springWrap: {position:"absolute",top:2,left:"25%",right:"25%",gap:1.5},
-  springLine: {height:2.5,borderRadius:1.5,backgroundColor:"rgba(255,255,255,0.58)",marginBottom:1},
-  movArrows:  {position:"absolute",inset:0,alignItems:"center",justifyContent:"center"},
-  arrowTxt:   {fontSize:7,color:"rgba(255,255,255,0.55)",letterSpacing:2},
-  player:     {position:"absolute",width:PW,height:PH,borderRadius:12,alignItems:"center",paddingTop:5,borderBottomWidth:3,overflow:"visible"},
-  playerGlow: {position:"absolute",top:-4,left:-4,right:-4,bottom:-4,borderRadius:16,opacity:0.16},
-  antenna:    {position:"absolute",top:-9,width:3,height:11,borderRadius:2},
-  eyeRow:     {flexDirection:"row",gap:8,marginTop:4},
-  eye:        {width:12,height:12,borderRadius:6,backgroundColor:"white",justifyContent:"center",alignItems:"center"},
-  pupil:      {width:5,height:5,borderRadius:2.5,backgroundColor:"#0A0A1A"},
-  eyeShine:   {position:"absolute",top:1,right:1,width:3,height:3,borderRadius:1.5,backgroundColor:"white"},
-  mouth:      {marginTop:4,width:14,height:5,borderRadius:3,borderBottomWidth:2,borderLeftWidth:1.5,borderRightWidth:1.5,borderTopWidth:0},
-  mouthH:     {borderColor:"rgba(255,255,255,0.88)"},
-  mouthN:     {borderColor:"rgba(255,255,255,0.52)"},
-  feet:       {flexDirection:"row",gap:8,marginTop:2},
-  foot:       {width:8,height:5,borderRadius:3},
-  shield:     {position:"absolute",top:-8,left:-8,right:-8,bottom:-8,borderRadius:36,borderWidth:3,borderColor:"#50AAFF",backgroundColor:"rgba(80,160,255,0.12)"},
-  magnetAura: {position:"absolute",top:-12,left:-12,right:-12,bottom:-12,borderRadius:40,borderWidth:2,borderColor:"#C050FF",backgroundColor:"rgba(192,80,255,0.09)",borderStyle:"dashed"},
+  plat:      {position:"absolute",height:PLH,borderRadius:8,borderBottomWidth:3,overflow:"hidden"},
+  platShine: {position:"absolute",top:0,left:6,right:6,height:4,borderRadius:3,backgroundColor:"rgba(255,255,255,0.42)"},
+  springWrap:{position:"absolute",top:2,left:"25%",right:"25%",gap:1.5},
+  springLine:{height:2.5,borderRadius:1.5,backgroundColor:"rgba(255,255,255,0.58)",marginBottom:1},
+  movArrows: {position:"absolute",inset:0,alignItems:"center",justifyContent:"center"},
+  arrowTxt:  {fontSize:7,color:"rgba(255,255,255,0.55)",letterSpacing:2},
+  player:    {position:"absolute",width:PW,height:PH,borderRadius:12,alignItems:"center",paddingTop:5,borderBottomWidth:3,overflow:"visible"},
+  playerGlow:{position:"absolute",top:-4,left:-4,right:-4,bottom:-4,borderRadius:16,opacity:0.16},
+  antenna:   {position:"absolute",top:-9,width:3,height:11,borderRadius:2},
+  eyeRow:    {flexDirection:"row",gap:8,marginTop:4},
+  eye:       {width:12,height:12,borderRadius:6,backgroundColor:"white",justifyContent:"center",alignItems:"center"},
+  pupil:     {width:5,height:5,borderRadius:2.5,backgroundColor:"#0A0A1A"},
+  eyeShine:  {position:"absolute",top:1,right:1,width:3,height:3,borderRadius:1.5,backgroundColor:"white"},
+  mouth:     {marginTop:4,width:14,height:5,borderRadius:3,borderBottomWidth:2,borderLeftWidth:1.5,borderRightWidth:1.5,borderTopWidth:0},
+  mouthH:    {borderColor:"rgba(255,255,255,0.88)"},
+  mouthN:    {borderColor:"rgba(255,255,255,0.52)"},
+  feet:      {flexDirection:"row",gap:8,marginTop:2},
+  foot:      {width:8,height:5,borderRadius:3},
+  shield:    {position:"absolute",top:-8,left:-8,right:-8,bottom:-8,borderRadius:36,borderWidth:3,borderColor:"#50AAFF",backgroundColor:"rgba(80,160,255,0.12)"},
+  magnetAura:{position:"absolute",top:-12,left:-12,right:-12,bottom:-12,borderRadius:40,borderWidth:2,borderColor:"#C050FF",backgroundColor:"rgba(192,80,255,0.09)",borderStyle:"dashed"},
+  bootsGlow: {position:"absolute",left:-4,bottom:-6,right:-4,height:10,borderRadius:5,backgroundColor:"rgba(255,176,32,0.55)"},
 });
 const s=StyleSheet.create({
-  root:       {flex:1},
-  hud:        {position:"absolute",top:0,left:0,right:0,alignItems:"center"},
-  scoreNum:   {fontSize:56,fontWeight:"900",letterSpacing:-2,lineHeight:60},
-  mLabel:     {fontSize:16,fontWeight:"700",letterSpacing:2,marginTop:-8,opacity:0.55},
-  multTxt:    {fontSize:20,fontWeight:"900",letterSpacing:1,marginTop:2},
-  bestLabel:  {fontSize:15,fontWeight:"700",letterSpacing:3,marginTop:2,opacity:0.42},
-  coinHud:    {position:"absolute",left:16},
-  coinHudTxt: {fontSize:14,fontWeight:"700",opacity:0.80},
-  livesWrap:  {position:"absolute",right:16},
-  livesRow:   {flexDirection:"row",gap:4},
-  heart:      {fontSize:20,fontWeight:"900"},
+  root:      {flex:1},
+  hud:       {position:"absolute",top:0,left:0,right:0,alignItems:"center"},
+  scoreNum:  {fontSize:56,fontWeight:"900",letterSpacing:-2,lineHeight:60},
+  mLabel:    {fontSize:16,fontWeight:"700",letterSpacing:2,marginTop:-8,opacity:0.55},
+  multTxt:   {fontSize:20,fontWeight:"900",letterSpacing:1,marginTop:2},
+  bestLabel: {fontSize:15,fontWeight:"700",letterSpacing:3,marginTop:2,opacity:0.42},
+  coinHud:   {position:"absolute",left:16},
+  coinHudTxt:{fontSize:14,fontWeight:"700",opacity:0.82},
+  livesWrap: {position:"absolute",right:16},
+  livesRow:  {flexDirection:"row",gap:4},
+  heart:     {fontSize:20,fontWeight:"900"},
   timersStack:{position:"absolute",right:16,gap:4},
-  timerRow:   {flexDirection:"row",alignItems:"center",gap:6},
-  timerIcon:  {fontSize:14},
-  timerTrack: {width:46,height:6,borderRadius:3,overflow:"hidden"},
-  timerFill:  {height:"100%",borderRadius:3},
+  timerRow:  {flexDirection:"row",alignItems:"center",gap:6},
+  timerIcon: {fontSize:14},
+  timerTrack:{width:46,height:6,borderRadius:3,overflow:"hidden"},
+  timerFill: {height:"100%",borderRadius:3},
   shieldBadge:{position:"absolute",right:16,backgroundColor:"rgba(0,120,220,0.20)",borderRadius:12,paddingHorizontal:8,paddingVertical:4},
-  shieldTxt:  {fontSize:18},
-  zoneLabel:  {position:"absolute",left:16},
-  zoneTxt:    {fontSize:12,fontWeight:"700",opacity:0.55,letterSpacing:0.5},
-  stompWrap:  {position:"absolute",left:0,right:0,top:SH*0.24,alignItems:"center"},
-  stompTxt:   {fontSize:26,fontWeight:"900",color:"#FF8844",letterSpacing:2,textShadowColor:"rgba(0,0,0,0.25)",textShadowOffset:{width:0,height:2},textShadowRadius:6},
-  djumpWrap:  {position:"absolute",left:0,right:0,top:SH*0.30,alignItems:"center"},
-  djumpTxt:   {fontSize:16,fontWeight:"900",color:"#50FFBB",letterSpacing:2},
-  comboWrap:  {position:"absolute",left:0,right:0,top:SH*0.35,alignItems:"center"},
-  comboTxt:   {fontSize:42,fontWeight:"900",letterSpacing:1,textShadowColor:"rgba(0,0,0,0.2)",textShadowOffset:{width:0,height:2},textShadowRadius:6},
-  msWrap:     {position:"absolute",left:0,right:0,top:SH*0.20,alignItems:"center"},
-  msPill:     {backgroundColor:"rgba(39,192,99,0.92)",paddingHorizontal:24,paddingVertical:10,borderRadius:30},
-  msTxt:      {fontSize:22,fontWeight:"900",color:"white",letterSpacing:1},
-  hintWrap:   {position:"absolute",left:0,right:0,bottom:70,alignItems:"center"},
-  hintTxt:    {fontSize:12,opacity:0.38,letterSpacing:0.5},
-  overlay:    {...StyleSheet.absoluteFillObject,justifyContent:"center",alignItems:"center",gap:10},
-  titleCard:  {alignItems:"center",marginBottom:4},
+  shieldTxt: {fontSize:18},
+  zoneLabel: {position:"absolute",left:16},
+  zoneTxt:   {fontSize:12,fontWeight:"700",opacity:0.55,letterSpacing:0.5},
+  stompWrap: {position:"absolute",left:0,right:0,top:SH*0.24,alignItems:"center"},
+  stompTxt:  {fontSize:26,fontWeight:"900",color:"#FF8844",letterSpacing:2,textShadowColor:"rgba(0,0,0,0.25)",textShadowOffset:{width:0,height:2},textShadowRadius:6},
+  djumpWrap: {position:"absolute",left:0,right:0,top:SH*0.30,alignItems:"center"},
+  djumpTxt:  {fontSize:16,fontWeight:"900",color:"#50FFBB",letterSpacing:2},
+  comboWrap: {position:"absolute",left:0,right:0,top:SH*0.35,alignItems:"center"},
+  comboTxt:  {fontSize:42,fontWeight:"900",letterSpacing:1,textShadowColor:"rgba(0,0,0,0.2)",textShadowOffset:{width:0,height:2},textShadowRadius:6},
+  msWrap:    {position:"absolute",left:0,right:0,top:SH*0.20,alignItems:"center"},
+  msPill:    {backgroundColor:"rgba(39,192,99,0.92)",paddingHorizontal:24,paddingVertical:10,borderRadius:30},
+  msTxt:     {fontSize:22,fontWeight:"900",color:"white",letterSpacing:1},
+  hintWrap:  {position:"absolute",left:0,right:0,bottom:70,alignItems:"center"},
+  hintTxt:   {fontSize:12,opacity:0.38,letterSpacing:0.5},
+  overlay:   {...StyleSheet.absoluteFillObject,justifyContent:"center",alignItems:"center",gap:10},
+  titleCard: {alignItems:"center",marginBottom:4},
   t1:{fontSize:72,fontWeight:"900",color:"#1A1A2A",letterSpacing:-3,lineHeight:70},
   t2:{fontSize:72,fontWeight:"900",color:P_GREEN,letterSpacing:-3,lineHeight:74},
-  titleBar:   {marginTop:8,width:80,height:4,borderRadius:2,backgroundColor:P_GREEN,opacity:0.65},
-  lbWrap:     {alignItems:"center",gap:3,padding:10,borderRadius:14,borderWidth:1,borderColor:"rgba(0,0,0,0.08)",backgroundColor:"rgba(255,255,255,0.12)"},
-  lbRow:      {flexDirection:"row",alignItems:"center",gap:8},
-  lbMedal:    {fontSize:18,width:26,textAlign:"center"},
-  lbScore:    {fontSize:24,fontWeight:"900",color:"#1A1A2A",letterSpacing:-1,minWidth:60},
-  lbM:        {fontSize:14,color:"#1A1A2A",opacity:0.45},
-  ovBest:     {fontSize:18,fontWeight:"700",color:"#1A1A2A",opacity:0.50,letterSpacing:3},
-  ovHint:     {fontSize:13,color:"#1A1A2A",opacity:0.38,letterSpacing:0.3,marginTop:-4},
-  goLabel:    {fontSize:18,fontWeight:"700",color:"#90C8FF",opacity:0.55,letterSpacing:6},
-  goScore:    {fontSize:92,fontWeight:"900",color:P_GREEN,letterSpacing:-4,lineHeight:96},
-  goM:        {fontSize:22,fontWeight:"700",color:P_GREEN,opacity:0.7,marginTop:-8},
-  newBest:    {fontSize:22,fontWeight:"900",color:"#F5B820",letterSpacing:2},
-  statsRow:   {flexDirection:"row",gap:12,marginTop:4},
-  statPill:   {alignItems:"center",backgroundColor:"rgba(255,255,255,0.08)",borderRadius:14,paddingHorizontal:14,paddingVertical:8},
-  statIcon:   {fontSize:20},
-  statVal:    {fontSize:22,fontWeight:"900",color:"white",letterSpacing:-1},
-  statLabel:  {fontSize:10,fontWeight:"700",color:"rgba(255,255,255,0.45)",letterSpacing:2,marginTop:1},
-  btn:        {backgroundColor:P_GREEN,paddingHorizontal:44,paddingVertical:17,borderRadius:16,borderBottomWidth:4,borderColor:P_DARK,marginTop:6},
-  btnTxt:     {fontSize:22,fontWeight:"900",color:"white",letterSpacing:2},
+  titleBar:  {marginTop:8,width:80,height:4,borderRadius:2,backgroundColor:P_GREEN,opacity:0.65},
+  lbWrap:    {alignItems:"center",gap:3,padding:10,borderRadius:14,borderWidth:1,borderColor:"rgba(0,0,0,0.08)",backgroundColor:"rgba(255,255,255,0.10)"},
+  lbRow:     {flexDirection:"row",alignItems:"center",gap:8},
+  lbMedal:   {fontSize:18,width:26,textAlign:"center"},
+  lbScore:   {fontSize:24,fontWeight:"900",letterSpacing:-1,minWidth:60},
+  lbM:       {fontSize:14},
+  ovHint:    {fontSize:13,color:"#1A1A2A",opacity:0.38,letterSpacing:0.3,marginTop:-4},
+  goLabel:   {fontSize:18,fontWeight:"700",color:"#90C8FF",opacity:0.55,letterSpacing:6},
+  goScore:   {fontSize:92,fontWeight:"900",color:P_GREEN,letterSpacing:-4,lineHeight:96},
+  goM:       {fontSize:22,fontWeight:"700",color:P_GREEN,opacity:0.7,marginTop:-8},
+  newBest:   {fontSize:22,fontWeight:"900",color:"#F5B820",letterSpacing:2},
+  statsRow:  {flexDirection:"row",gap:12,marginTop:4},
+  statPill:  {alignItems:"center",backgroundColor:"rgba(255,255,255,0.08)",borderRadius:14,paddingHorizontal:14,paddingVertical:8},
+  statIcon:  {fontSize:20},
+  statVal:   {fontSize:22,fontWeight:"900",color:"white",letterSpacing:-1},
+  statLabel: {fontSize:10,fontWeight:"700",color:"rgba(255,255,255,0.45)",letterSpacing:2,marginTop:1},
+  btn:       {backgroundColor:P_GREEN,paddingHorizontal:44,paddingVertical:17,borderRadius:16,borderBottomWidth:4,borderColor:P_DARK,marginTop:6},
+  btnTxt:    {fontSize:22,fontWeight:"900",color:"white",letterSpacing:2},
 });
