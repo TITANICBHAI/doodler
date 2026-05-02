@@ -115,6 +115,7 @@ interface Enemy    {id:number;x:number;y:number;vx:number;vy:number;type:EnemyTy
 interface WarpStar {id:number;x:number;y:number;vy:number;r:number;}
 interface TextPop  {id:number;x:number;y:number;vy:number;life:number;text:string;color:string;}
 interface WeatherP {id:number;x:number;y:number;vy:number;vx:number;}
+interface Gem      {id:number;x:number;y:number;collected:boolean;popT:number;}
 
 interface GS {
   px:number;py:number;pvx:number;pvy:number;psx:number;psy:number;facing:number;eyeY:number;
@@ -130,7 +131,8 @@ interface GS {
   ssTimer:number;
   plats:Plat[];parts:Particle[];trail:TrailPt[];clouds:Cloud[];
   coins:Coin[];powerUps:PU[];planets:Planet[];shootStars:SShoot[];enemies:Enemy[];
-  warpStars:WarpStar[];textPops:TextPop[];weatherParts:WeatherP[];
+  warpStars:WarpStar[];textPops:TextPop[];weatherParts:WeatherP[];gems:Gem[];
+  gemsCollected:number;nearMissCooldown:number;
   phase:Phase;input:number;
   shakeX:number;shakeY:number;shakeT:number;
   pid:number;
@@ -202,7 +204,8 @@ function mkGS(best:number):GS{
     windF:0,windT:0,windNextT:12,
     ssTimer:9,
     plats:[],parts:[],trail:[],clouds:[],coins:[],powerUps:[],planets:[],shootStars:[],enemies:[],
-    warpStars:[],textPops:[],weatherParts:[],
+    warpStars:[],textPops:[],weatherParts:[],gems:[],
+    gemsCollected:0,nearMissCooldown:0,
     phase:"menu",input:0,shakeX:0,shakeY:0,shakeT:0,pid:0,
   };
   gs.plats.push(mkStat(gs,startY+PH,SW/2-52,104));
@@ -260,7 +263,8 @@ function update(gs:GS,dt:number,now:number){
   if(gs.starT>0){gs.starT=Math.max(0,gs.starT-dt);gs.invincT=Math.max(gs.invincT,gs.starT>0?gs.starT+0.05:0);}
 
   gs.px+=gs.pvx*dt;gs.py+=gs.pvy*dt;
-  if(gs.px+PW<0) gs.px=SW; if(gs.px>SW) gs.px=-PW;
+  if(gs.px+PW<0){gs.px=SW;if(gs.pvy>80){gs.pvy=Math.max(gs.pvy-90,gs.pvy*0.86);emit(gs,SW,gs.py+PH/2,"#80EEFF",7);}}
+  if(gs.px>SW){gs.px=-PW;if(gs.pvy>80){gs.pvy=Math.max(gs.pvy-90,gs.pvy*0.86);emit(gs,0,gs.py+PH/2,"#80EEFF",7);}}
   gs.eyeY+=((gs.pvy<-180?-2.5:gs.pvy>180?2.5:0)-gs.eyeY)*Math.min(1,dt*8);
 
   if(!gs.trail.length||Math.hypot(gs.px-gs.trail[0].x,gs.py-gs.trail[0].y)>5){
@@ -336,6 +340,17 @@ function update(gs:GS,dt:number,now:number){
     }
   }
 
+  // Gems
+  for(const gm of gs.gems){
+    if(gm.collected){gm.popT=Math.max(0,gm.popT-dt*3);continue;}
+    if(gs.magnetT>0){const dx=pcx-gm.x,dy=pcy-gm.y,d=Math.hypot(dx,dy);if(d<180&&d>0){const spd=220*(1-d/180)+70;gm.x+=dx/d*spd*dt;gm.y+=dy/d*spd*dt;}}
+    if(Math.hypot(pcx-gm.x,pcy-gm.y)<24){
+      gm.collected=true;gm.popT=1;gs.gemsCollected++;
+      const bonus=Math.round(20*comboMult(gs.combo));
+      gs.score+=bonus;emit(gs,gm.x,gm.y,"#C060FF",10);pop(gs,gm.x,gm.y-14,`💎 +${bonus}`,"#D080FF");gs.shakeT=0.08;
+    }
+  }
+
   // Power-ups
   for(const pu of gs.powerUps){
     if(pu.col){pu.bt=Math.max(0,pu.bt-dt);continue;}
@@ -387,6 +402,16 @@ function update(gs:GS,dt:number,now:number){
     }
   }
 
+  // Near-miss bonus
+  if(gs.nearMissCooldown>0){gs.nearMissCooldown-=dt;}else{
+    const EW=36,EH=30;
+    for(const e of gs.enemies){
+      if(e.dead) continue;
+      const d=Math.hypot(gs.px+PW/2-e.x-EW/2,gs.py+PH/2-e.y-EH/2);
+      if(d>24&&d<60){gs.score+=5;pop(gs,gs.px+PW/2,gs.py-26,"😅 CLOSE CALL! +5","#FFCC44");emit(gs,gs.px+PW/2,gs.py+PH/2,"#FFCC44",8);gs.nearMissCooldown=2.2;break;}
+    }
+  }
+
   // Camera — smooth lead, hard clamp so player never exits top
   const targetY=gs.py-SH*CAM_LEAD;
   if(targetY<gs.scrollY){
@@ -420,6 +445,9 @@ function update(gs:GS,dt:number,now:number){
       if(Math.random()<0.42) spawnCluster(gs,plat.x+plat.w/2,topY);
       else gs.coins.push({id:gs.pid++,x:plat.x+Math.random()*plat.w,y:topY-30,collected:false,popT:0});
     }
+    // Gem: rarer than coins, only above 280m
+    if(gs.score>280&&Math.random()<0.060)
+      gs.gems.push({id:gs.pid++,x:plat.x+Math.random()*plat.w,y:topY-36,collected:false,popT:0});
     // Heart: very rare, only when hurt
     if(gs.score>120&&gs.lives<=2&&Math.random()<0.032&&!gs.powerUps.some(p=>!p.col&&p.tp==="heart"))
       gs.powerUps.push(mkPU(gs,topY-45,"heart"));
@@ -490,6 +518,7 @@ function update(gs:GS,dt:number,now:number){
   const cutY=gs.scrollY+SH+300;
   gs.plats   =gs.plats.filter(p=>p.y<cutY);
   gs.coins   =gs.coins.filter(c=>c.y<cutY||!c.collected);
+  gs.gems    =gs.gems.filter(g=>g.y<cutY||!g.collected);
   gs.powerUps=gs.powerUps.filter(p=>p.y<cutY);
   gs.enemies =gs.enemies.filter(e=>!e.dead&&(e.vx<0?e.x>-90:e.x<SW+90)&&e.y<cutY);
   gs.planets =gs.planets.filter(p=>p.y-gs.scrollY*p.par<SH+200);
@@ -656,11 +685,23 @@ function CoinView({c,now}:{c:Coin;now:number}){
   );
 }
 
+// ─── Gem ──────────────────────────────────────────────────────────────────────
+function GemView({gm,now}:{gm:Gem;now:number}){
+  if(gm.collected&&gm.popT<=0) return null;
+  const pulse=gm.collected?1+(1-gm.popT)*0.6:0.88+Math.sin(now/260+gm.id)*0.12;
+  const glow=`rgba(${180+Math.round(Math.sin(now/200+gm.id)*30)},60,255,${(0.22+Math.sin(now/180)*0.10).toFixed(2)})`;
+  return(
+    <View style={{position:"absolute",left:gm.x-12,top:gm.y-12,width:24,height:24,opacity:gm.collected?gm.popT:1,transform:[{scale:pulse},{rotate:"45deg"}],borderRadius:4,backgroundColor:"#9B30FF",borderWidth:2.5,borderColor:"#C870FF",alignItems:"center",justifyContent:"center",shadowColor:glow,shadowRadius:8,shadowOpacity:1}}>
+      <View style={{width:9,height:9,borderRadius:2,backgroundColor:"rgba(255,255,255,0.52)",transform:[{rotate:"45deg"}]}}/>
+    </View>
+  );
+}
+
 // ─── Player ───────────────────────────────────────────────────────────────────
 function PlayerView({gs,plrBg,plrBrd,combo,comboT}:{gs:GS;plrBg:string;plrBrd:string;combo:number;comboT:number}){
   const flip=gs.facing<0?-1:1;
   const ey=Math.round(gs.eyeY*10)/10;
-  const inv=gs.invincT>0&&Math.sin(gs.invincT*18)>0;
+  const inv=gs.invincT>0&&gs.starT<=0&&Math.sin(gs.invincT*18)>0;
   const fireAura=combo>=20&&comboT>0;
   const pulseBord=fireAura?`rgba(255,${Math.floor(60+Math.sin(Date.now()/120)*60)},0,0.85)`:"transparent";
   const starActive=gs.starT>0;
@@ -743,6 +784,15 @@ function StatPill({icon,val,label}:{icon:string;val:number;label:string}){
 function LbRow({score,rank,dark}:{score:number;rank:number;dark:boolean}){
   const medals=["🥇","🥈","🥉"];
   return(<View style={s.lbRow}><Text style={s.lbMedal}>{medals[rank]??""}</Text><Text style={[s.lbScore,{color:dark?"white":"#1A1A2A"}]}>{score}</Text><Text style={[s.lbM,{color:dark?"rgba(255,255,255,0.45)":"rgba(0,0,0,0.45)"}]}>m</Text></View>);
+}
+
+// ─── Medal helper ─────────────────────────────────────────────────────────────
+function getMedal(s:number):{icon:string;label:string;col:string}|null{
+  if(s>=1500) return{icon:"💎",label:"DIAMOND",col:"#80DFFF"};
+  if(s>=750)  return{icon:"🥇",label:"GOLD",col:"#FFD700"};
+  if(s>=300)  return{icon:"🥈",label:"SILVER",col:"#C0C8D8"};
+  if(s>=100)  return{icon:"🥉",label:"BRONZE",col:"#CD8B52"};
+  return null;
 }
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
@@ -843,6 +893,7 @@ export default function GameScreen(){
           {r.plats.map(p=><PlatView key={p.id} p={p}/>)}
           {r.powerUps.map(p=><PUView key={p.id} pu={p}/>)}
           {r.coins.map(c=><CoinView key={c.id} c={c} now={now}/>)}
+          {r.gems.map(gm=><GemView key={gm.id} gm={gm} now={now}/>)}
           {r.enemies.map(e=><EnemyView key={e.id} e={e}/>)}
 
           {/* Trail — flame colors when boosting */}
@@ -906,7 +957,7 @@ export default function GameScreen(){
 
         {phase==="play"&&r.coinsCollected>0&&(
           <View style={[s.coinHud,{top:topPad+46}]} pointerEvents="none">
-            <Text style={[s.coinHudTxt,{color:zc.txt}]}>🪙 {r.coinsCollected}</Text>
+            <Text style={[s.coinHudTxt,{color:zc.txt}]}>🪙 {r.coinsCollected}{r.gemsCollected>0?`  💎 ${r.gemsCollected}`:""}</Text>
           </View>
         )}
         {phase==="play"&&r.windT>0&&(
@@ -975,8 +1026,10 @@ export default function GameScreen(){
             <Text style={s.goScore}>{r.score}</Text>
             <Text style={s.goM}>m</Text>
             {r.score>=r.best&&r.score>0&&<Text style={s.newBest}>✦ NEW BEST ✦</Text>}
+            {(()=>{const m=getMedal(r.score);return m?<Text style={[s.newBest,{color:m.col,fontSize:28,letterSpacing:4}]}>{m.icon} {m.label}</Text>:null;})()}
             <View style={s.statsRow}>
               <StatPill icon="🪙" val={r.coinsCollected} label="COINS"/>
+              <StatPill icon="💎" val={r.gemsCollected} label="GEMS"/>
               <StatPill icon="⚡" val={r.maxCombo} label="COMBO"/>
               <StatPill icon="💀" val={r.enemiesDefeated} label="STOMPED"/>
             </View>
