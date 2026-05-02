@@ -25,6 +25,12 @@ function getBest(): number {
 function saveBest(v: number): void {
   try { (globalThis as any).localStorage?.setItem?.("dc_best", String(v)); } catch {}
 }
+function getBestCombo(): number {
+  try { return Math.max(0, parseInt((globalThis as any).localStorage?.getItem?.("dc_bc") || "0") || 0); } catch { return 0; }
+}
+function saveBestCombo(v: number): void {
+  try { (globalThis as any).localStorage?.setItem?.("dc_bc", String(v)); } catch {}
+}
 function getLeaderboard(): number[] {
   try { return JSON.parse((globalThis as any).localStorage?.getItem?.("dc_lb") || "[]") || []; } catch { return []; }
 }
@@ -76,15 +82,15 @@ function zoneColors(score:number){
 }
 
 // ─── Platform & power-up types ────────────────────────────────────────────────
-type PType="static"|"moving"|"spring"|"breakable"|"crumble"|"golden"|"rocket";
-const PCOL:Record<PType,string>={static:"#2DC968",moving:"#4EAAF5",spring:"#F5D123",breakable:"#F05232",crumble:"#FF6C20",golden:"#FFD700",rocket:"#FF4420"};
-const PBORD:Record<PType,string>={static:"#1AA850",moving:"#2D88D8",spring:"#D4A800",breakable:"#C83018",crumble:"#CC4A10",golden:"#BF9B00",rocket:"#CC2010"};
+type PType="static"|"moving"|"spring"|"breakable"|"crumble"|"golden"|"rocket"|"ice";
+const PCOL:Record<PType,string>={static:"#2DC968",moving:"#4EAAF5",spring:"#F5D123",breakable:"#F05232",crumble:"#FF6C20",golden:"#FFD700",rocket:"#FF4420",ice:"#A8EEFF"};
+const PBORD:Record<PType,string>={static:"#1AA850",moving:"#2D88D8",spring:"#D4A800",breakable:"#C83018",crumble:"#CC4A10",golden:"#BF9B00",rocket:"#CC2010",ice:"#60C8E8"};
 const P_GREEN="#27C063"; const P_DARK="#1E9E50";
 
-type PUType="jetpack"|"shield"|"magnet"|"boots"|"heart";
-const PU_ICON:Record<PUType,string>={jetpack:"🚀",shield:"🛡️",magnet:"🧲",boots:"🥾",heart:"❤️"};
-const PU_COL:Record<PUType,string>={jetpack:"#FF8C00",shield:"#00A0FF",magnet:"#C050FF",boots:"#FFB020",heart:"#FF4455"};
-const PU_GLW:Record<PUType,string>={jetpack:"rgba(255,140,0,0.28)",shield:"rgba(0,160,255,0.28)",magnet:"rgba(192,80,255,0.28)",boots:"rgba(255,176,32,0.28)",heart:"rgba(255,68,85,0.32)"};
+type PUType="jetpack"|"shield"|"magnet"|"boots"|"heart"|"star";
+const PU_ICON:Record<PUType,string>={jetpack:"🚀",shield:"🛡️",magnet:"🧲",boots:"🥾",heart:"❤️",star:"⭐"};
+const PU_COL:Record<PUType,string>={jetpack:"#FF8C00",shield:"#00A0FF",magnet:"#C050FF",boots:"#FFB020",heart:"#FF4455",star:"#FFD700"};
+const PU_GLW:Record<PUType,string>={jetpack:"rgba(255,140,0,0.28)",shield:"rgba(0,160,255,0.28)",magnet:"rgba(192,80,255,0.28)",boots:"rgba(255,176,32,0.28)",heart:"rgba(255,68,85,0.32)",star:"rgba(255,215,0,0.40)"};
 
 // ─── City silhouette (pre-computed) ──────────────────────────────────────────
 const CITY_BLDGS = Array.from({length:20},(_,i)=>({
@@ -97,7 +103,7 @@ const CITY_BLDGS = Array.from({length:20},(_,i)=>({
 type Phase="menu"|"play"|"dead";
 type EnemyType="bird"|"ghost"|"ufo"|"asteroid";
 
-interface Plat     {id:number;x:number;y:number;w:number;type:PType;broken:boolean;ox:number;dir:number;range:number;sq:number;crumbleT:number;}
+interface Plat     {id:number;x:number;y:number;w:number;type:PType;broken:boolean;ox:number;dir:number;range:number;sq:number;crumbleT:number;ringT:number;}
 interface Particle {x:number;y:number;vx:number;vy:number;life:number;color:string;r:number;}
 interface TrailPt  {x:number;y:number;}
 interface Cloud    {id:number;x:number;y:number;w:number;h:number;par:number;op:number;}
@@ -113,10 +119,10 @@ interface WeatherP {id:number;x:number;y:number;vy:number;vx:number;}
 interface GS {
   px:number;py:number;pvx:number;pvy:number;psx:number;psy:number;facing:number;eyeY:number;
   scrollY:number;minY:number;startY:number;
-  score:number;best:number;displayScore:number;
+  score:number;best:number;bestCombo:number;displayScore:number;
   combo:number;comboT:number;maxCombo:number;coinsCollected:number;enemiesDefeated:number;
   coinStreak:number;coinStreakT:number;
-  lives:number;jetpackT:number;magnetT:number;bootsT:number;rocketFlashT:number;shielded:boolean;
+  lives:number;jetpackT:number;magnetT:number;bootsT:number;rocketFlashT:number;starT:number;shielded:boolean;
   canDJump:boolean;invincT:number;djumpFlashT:number;stompFlashT:number;
   milestoneText:string;milestoneT:number;lastMilestone:number;
   lastZoneIdx:number;zoneFlashT:number;zoneFlashCol:string;
@@ -135,17 +141,17 @@ function pickType(score:number):PType{
   const r=Math.random();
   if(score<80) return r<0.06?"moving":"static";
   if(score<200) return r<0.09?"spring":r<0.24?"moving":r<0.37?"breakable":"static";
-  if(score<400) return r<0.10?"spring":r<0.25?"moving":r<0.40?"breakable":r<0.50?"crumble":r<0.55?"golden":"static";
-  if(score<700) return r<0.11?"spring":r<0.26?"moving":r<0.43?"breakable":r<0.55?"crumble":r<0.60?"golden":r<0.63?"rocket":"static";
-  return       r<0.12?"spring":r<0.26?"moving":r<0.44?"breakable":r<0.57?"crumble":r<0.61?"golden":r<0.65?"rocket":"static";
+  if(score<400) return r<0.10?"spring":r<0.25?"moving":r<0.40?"breakable":r<0.50?"crumble":r<0.55?"golden":r<0.59?"ice":"static";
+  if(score<700) return r<0.11?"spring":r<0.26?"moving":r<0.43?"breakable":r<0.55?"crumble":r<0.60?"golden":r<0.63?"rocket":r<0.67?"ice":"static";
+  return       r<0.12?"spring":r<0.26?"moving":r<0.44?"breakable":r<0.57?"crumble":r<0.61?"golden":r<0.65?"rocket":r<0.69?"ice":"static";
 }
 function mkPlat(gs:GS,y:number,sc:number):Plat{
   // Width narrows with altitude for difficulty; gap is capped for fairness
   const w=Math.max(46,92-sc*0.030),x=Math.random()*(SW-w);
-  return{id:gs.pid++,x,y,w,type:pickType(sc),broken:false,ox:x,dir:Math.random()<0.5?1:-1,range:38+Math.random()*55,sq:0,crumbleT:-1};
+  return{id:gs.pid++,x,y,w,type:pickType(sc),broken:false,ox:x,dir:Math.random()<0.5?1:-1,range:38+Math.random()*55,sq:0,crumbleT:-1,ringT:0};
 }
 function mkStat(gs:GS,y:number,x:number,w:number):Plat{
-  return{id:gs.pid++,x,y,w,type:"static",broken:false,ox:x,dir:1,range:0,sq:0,crumbleT:-1};
+  return{id:gs.pid++,x,y,w,type:"static",broken:false,ox:x,dir:1,range:0,sq:0,crumbleT:-1,ringT:0};
 }
 function mkCloud(gs:GS,wy:number):Cloud{
   return{id:gs.pid++,x:Math.random()*(SW-120),y:wy,w:90+Math.random()*100,h:28+Math.random()*24,par:0.22+Math.random()*0.18,op:0.55+Math.random()*0.35};
@@ -180,16 +186,16 @@ function spawnCluster(gs:GS,cx:number,y:number){
 
 const MILESTONES=[100,250,500,750,1000,1500,2000,3000];
 const COMBO_TIERS=[5,10,15,20,30];
-const PU_TYPES:PUType[]=["jetpack","shield","magnet","boots"]; // heart spawns separately
+const PU_TYPES:PUType[]=["jetpack","shield","magnet","boots","star"]; // heart spawns separately; star is rarest
 
 function mkGS(best:number):GS{
   const startY=SH*0.70;
   const gs:GS={
     px:SW/2-PW/2,py:startY,pvx:0,pvy:JUMP_VEL,psx:1,psy:1,facing:1,eyeY:0,
-    scrollY:0,minY:startY,startY,score:0,best,displayScore:0,
+    scrollY:0,minY:startY,startY,score:0,best,bestCombo:getBestCombo(),displayScore:0,
     combo:0,comboT:0,maxCombo:0,coinsCollected:0,enemiesDefeated:0,
     coinStreak:0,coinStreakT:0,
-    lives:3,jetpackT:0,magnetT:0,bootsT:0,rocketFlashT:0,shielded:false,
+    lives:3,jetpackT:0,magnetT:0,bootsT:0,rocketFlashT:0,starT:0,shielded:false,
     canDJump:true,invincT:0,djumpFlashT:0,stompFlashT:0,
     milestoneText:"",milestoneT:0,lastMilestone:0,
     lastZoneIdx:-1,zoneFlashT:0,zoneFlashCol:"",
@@ -251,6 +257,7 @@ function update(gs:GS,dt:number,now:number){
   }
   if(gs.bootsT>0)      gs.bootsT-=dt;
   if(gs.rocketFlashT>0)gs.rocketFlashT-=dt;
+  if(gs.starT>0){gs.starT=Math.max(0,gs.starT-dt);gs.invincT=Math.max(gs.invincT,gs.starT>0?gs.starT+0.05:0);}
 
   gs.px+=gs.pvx*dt;gs.py+=gs.pvy*dt;
   if(gs.px+PW<0) gs.px=SW; if(gs.px>SW) gs.px=-PW;
@@ -269,13 +276,16 @@ function update(gs:GS,dt:number,now:number){
       if(feet>=p.y&&feet<=p.y+PLH+14&&gs.px+PW>p.x+4&&gs.px<p.x+p.w-4){
         gs.py=p.y-PH;
         // Jump velocity based on platform type
-        const isRocket=p.type==="rocket",isSpring=p.type==="spring",bootBoost=gs.bootsT>0&&!isSpring&&!isRocket;
+        const isRocket=p.type==="rocket",isSpring=p.type==="spring",isIce=p.type==="ice",bootBoost=gs.bootsT>0&&!isSpring&&!isRocket;
+        if(isIce) gs.pvx=gs.pvx*(1.55+Math.random()*0.35)+(Math.random()-0.5)*30; // slippery slide
         gs.pvy=isRocket?ROCKET_VEL:isSpring?SPRING_VEL:bootBoost?Math.round(SPRING_VEL*0.82):JUMP_VEL;
         gs.psx=isRocket?0.70:isSpring?1.58:bootBoost?1.52:1.40;
         gs.psy=isRocket?1.45:isSpring?0.50:bootBoost?0.55:0.63;
         p.sq=isRocket?0.80:isSpring?0.65:0.45;
+        p.ringT=1.0;
         gs.canDJump=true;gs.combo++;gs.comboT=2.8;
         if(gs.combo>gs.maxCombo) gs.maxCombo=gs.combo;
+        if(gs.combo>gs.bestCombo){gs.bestCombo=gs.combo;saveBestCombo(gs.bestCombo);}
         for(const ct of COMBO_TIERS){if(gs.combo===ct){emit(gs,gs.px+PW/2,gs.py,comboCol(ct),20);gs.shakeT=0.12;break;}}
         emit(gs,p.x+p.w/2,p.y,PCOL[p.type],isRocket?22:isSpring?14:6);
         if(p.type==="breakable") p.broken=true;
@@ -340,6 +350,11 @@ function update(gs:GS,dt:number,now:number){
         if(gs.lives<3){gs.lives++;emit(gs,pu.x,pu.y,"#FF4455",24);pop(gs,pu.x,pu.y-22,"❤️ EXTRA LIFE!","#FF4455");gs.shakeT=0.22;}
         else{gs.score+=30;pop(gs,pu.x,pu.y-22,"❤️ +30 FULL HEART","#FF4455");emit(gs,pu.x,pu.y,"#FF8899",12);}
       }
+      else if(pu.tp==="star"){
+        gs.starT=3.5;gs.invincT=3.6;
+        for(const e of gs.enemies){if(!e.dead){e.dead=true;emit(gs,e.x+18,e.y,"#FFD700",14);for(let d=0;d<2;d++)gs.coins.push({id:gs.pid++,x:e.x+18+(Math.random()-0.5)*24,y:e.y,collected:false,popT:0});}}
+        emit(gs,pu.x,pu.y,"#FFD700",32);pop(gs,pu.x,pu.y-24,"⭐ STAR POWER!","#FFD700");gs.shakeT=0.35;
+      }
     }
   }
 
@@ -358,6 +373,8 @@ function update(gs:GS,dt:number,now:number){
         gs.psx=1.45;gs.psy=0.60;gs.canDJump=true;
         gs.combo++;gs.comboT=2.8;gs.stompFlashT=0.65;gs.enemiesDefeated++;gs.score+=15;
         if(gs.combo>gs.maxCombo) gs.maxCombo=gs.combo;
+        if(gs.combo>gs.bestCombo){gs.bestCombo=gs.combo;saveBestCombo(gs.bestCombo);}
+        for(let d=0;d<2;d++) gs.coins.push({id:gs.pid++,x:e.x+EW/2+(Math.random()-0.5)*32,y:e.y+(Math.random()-0.5)*16,collected:false,popT:0});
         emit(gs,e.x+EW/2,e.y,"#FF8844",20);pop(gs,e.x+EW/2,e.y-14,"+15 STOMP!","#FF8844");gs.shakeT=0.10;break;
       }
       if(feet>e.y+EH*0.35&&gs.py<e.y+EH-5){
@@ -381,7 +398,7 @@ function update(gs:GS,dt:number,now:number){
   if(gs.py<gs.minY) gs.minY=gs.py;
   gs.score=Math.max(gs.score,Math.floor((gs.startY-gs.minY)/5));
   if(gs.score>gs.best){gs.best=gs.score;saveBest(gs.best);}
-  for(const m of MILESTONES){if(gs.score>=m&&m>gs.lastMilestone){gs.lastMilestone=m;gs.milestoneText=`${m} m`;gs.milestoneT=2.2;}}
+  for(const m of MILESTONES){if(gs.score>=m&&m>gs.lastMilestone){gs.lastMilestone=m;gs.milestoneText=`${m} m`;gs.milestoneT=2.2;const fc=["#FF4444","#FFD700","#00FF88","#FF88FF","#00CCFF","#FF8844","#AAFFAA","#FF44FF"][MILESTONES.indexOf(m)%8];for(let fx=0;fx<5;fx++)emit(gs,SW*0.1+fx*(SW*0.2),gs.py-SH*0.08,fc,18);}}
 
   // Animated display score
   gs.displayScore=Math.min(gs.score,gs.displayScore+(gs.score-gs.displayScore)*Math.min(1,dt*10));
@@ -458,7 +475,7 @@ function update(gs:GS,dt:number,now:number){
   // Squash lerps + shake
   const sr=1-Math.exp(-13*dt);
   gs.psx+=(1-gs.psx)*sr;gs.psy+=(1-gs.psy)*sr;
-  for(const p of gs.plats) p.sq+=(0-p.sq)*Math.min(1,dt*14);
+  for(const p of gs.plats){p.sq+=(0-p.sq)*Math.min(1,dt*14);if(p.ringT>0)p.ringT=Math.max(0,p.ringT-dt*2.2);}
   if(gs.shakeT>0){gs.shakeT-=dt;const s=gs.shakeT*9;gs.shakeX=(Math.random()-0.5)*s;gs.shakeY=(Math.random()-0.5)*s;}else{gs.shakeX=0;gs.shakeY=0;}
 
   // Timers
@@ -592,15 +609,21 @@ function PlatView({p}:{p:Plat}){
   const bg=br?"#999":crumbling?"#FF6C20":PCOL[p.type];
   const bord=br?"#777":crumbling?"#CC4A10":PBORD[p.type];
   const op=br?0.45:crumbling?Math.max(0.3,p.crumbleT/0.52):1;
+  const ringScale=p.ringT>0?1+(1-p.ringT)*1.6:1;
+  const ringOp=p.ringT>0?p.ringT*0.55:0;
   return(
-    <View style={[g.plat,{left:p.x+shakeX,top:p.y+(PLH*p.sq*0.22),width:p.w,backgroundColor:bg,borderColor:bord,opacity:op,transform:[{scaleY:1-p.sq*0.44}]}]}>
-      <View style={[g.platShine,p.type==="golden"?{backgroundColor:"rgba(255,255,255,0.55)"}:{}]}/>
-      {p.type==="spring"&&!br&&<View style={g.springWrap}><View style={g.springLine}/><View style={g.springLine}/><View style={g.springLine}/></View>}
-      {p.type==="moving"&&!br&&<View style={g.movArrows}><Text style={g.arrowTxt}>{"◀  ▶"}</Text></View>}
-      {p.type==="crumble"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:9,color:"rgba(255,255,255,0.65)"}]}>⚠ ⚠ ⚠</Text></View>}
-      {p.type==="golden"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:10,letterSpacing:4,color:"rgba(40,20,0,0.55)"}]}>✦ ✦ ✦</Text></View>}
-      {p.type==="rocket"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:14}]}>🚀</Text></View>}
-    </View>
+    <>
+      {p.ringT>0&&<View pointerEvents="none" style={{position:"absolute",left:p.x-p.w*0.3,top:p.y-4,width:p.w*1.6,height:PLH+8,borderRadius:12,borderWidth:2.5,borderColor:PCOL[p.type],opacity:ringOp,transform:[{scaleX:ringScale}]}}/>}
+      <View style={[g.plat,{left:p.x+shakeX,top:p.y+(PLH*p.sq*0.22),width:p.w,backgroundColor:bg,borderColor:bord,opacity:op,transform:[{scaleY:1-p.sq*0.44}]}]}>
+        <View style={[g.platShine,p.type==="golden"?{backgroundColor:"rgba(255,255,255,0.55)"}:p.type==="ice"?{backgroundColor:"rgba(255,255,255,0.72)"}:{}]}/>
+        {p.type==="spring"&&!br&&<View style={g.springWrap}><View style={g.springLine}/><View style={g.springLine}/><View style={g.springLine}/></View>}
+        {p.type==="moving"&&!br&&<View style={g.movArrows}><Text style={g.arrowTxt}>{"◀  ▶"}</Text></View>}
+        {p.type==="crumble"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:9,color:"rgba(255,255,255,0.65)"}]}>⚠ ⚠ ⚠</Text></View>}
+        {p.type==="golden"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:10,letterSpacing:4,color:"rgba(40,20,0,0.55)"}]}>✦ ✦ ✦</Text></View>}
+        {p.type==="rocket"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:14}]}>🚀</Text></View>}
+        {p.type==="ice"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:9,letterSpacing:3,color:"rgba(20,80,140,0.65)"}]}>❄  ❄  ❄</Text></View>}
+      </View>
+    </>
   );
 }
 
@@ -640,9 +663,13 @@ function PlayerView({gs,plrBg,plrBrd,combo,comboT}:{gs:GS;plrBg:string;plrBrd:st
   const inv=gs.invincT>0&&Math.sin(gs.invincT*18)>0;
   const fireAura=combo>=20&&comboT>0;
   const pulseBord=fireAura?`rgba(255,${Math.floor(60+Math.sin(Date.now()/120)*60)},0,0.85)`:"transparent";
+  const starActive=gs.starT>0;
+  const starBg=starActive?hslToRgb((Date.now()/22)%360,100,62):plrBg;
+  const starBord=starActive?hslToRgb((Date.now()/22+120)%360,100,55):plrBrd;
   return(
-    <View style={[g.player,{left:gs.px,top:gs.py,backgroundColor:plrBg,borderColor:plrBrd,transform:[{scaleX:gs.psx*flip},{scaleY:gs.psy}],opacity:inv?0.32:1}]}>
-      {fireAura&&<View style={[g.comboAura,{borderColor:pulseBord,backgroundColor:combo>=30?"rgba(255,60,0,0.12)":"rgba(255,120,0,0.07)"}]}/>}
+    <View style={[g.player,{left:gs.px,top:gs.py,backgroundColor:starActive?starBg:plrBg,borderColor:starActive?starBord:plrBrd,transform:[{scaleX:gs.psx*flip},{scaleY:gs.psy}],opacity:inv?0.42:1}]}>
+      {starActive&&<View style={[g.comboAura,{borderColor:hslToRgb((Date.now()/18)%360,100,60),borderWidth:4,backgroundColor:"rgba(255,220,0,0.14)"}]}/>}
+      {fireAura&&!starActive&&<View style={[g.comboAura,{borderColor:pulseBord,backgroundColor:combo>=30?"rgba(255,60,0,0.12)":"rgba(255,120,0,0.07)"}]}/>}
       <View style={[g.playerGlow,{backgroundColor:plrBg}]}/>
       <View style={[g.antenna,{left:PW*0.26,backgroundColor:plrBrd}]}/>
       <View style={[g.antenna,{right:PW*0.26,backgroundColor:plrBrd}]}/>
@@ -891,10 +918,11 @@ export default function GameScreen(){
         {phase==="play"&&(<View style={[s.livesWrap,{top:topPad+6}]} pointerEvents="none"><LivesDisplay lives={r.lives} dark={zc.dark}/></View>)}
 
         <View style={[s.timersStack,{top:topPad+52}]} pointerEvents="none">
-          <TimerBar t={r.jetpackT}      max={4} col="#FF8C00" icon="🚀"/>
-          <TimerBar t={r.magnetT}       max={6} col="#C050FF" icon="🧲"/>
-          <TimerBar t={r.bootsT}        max={5} col="#FFB020" icon="🥾"/>
+          <TimerBar t={r.jetpackT}      max={4}   col="#FF8C00" icon="🚀"/>
+          <TimerBar t={r.magnetT}       max={6}   col="#C050FF" icon="🧲"/>
+          <TimerBar t={r.bootsT}        max={5}   col="#FFB020" icon="🥾"/>
           <TimerBar t={r.rocketFlashT}  max={0.8} col="#FF4420" icon="🔥"/>
+          <TimerBar t={r.starT}         max={3.5} col="#FFD700" icon="⭐"/>
         </View>
 
         {phase==="play"&&r.shielded&&(<View style={[s.shieldBadge,{top:topPad+54}]} pointerEvents="none"><Text style={s.shieldTxt}>🛡️</Text></View>)}
@@ -921,7 +949,7 @@ export default function GameScreen(){
         {phase==="play"&&r.score===0&&(
           <View style={s.hintWrap} pointerEvents="none">
             <Text style={[s.hintTxt,{color:zc.txt}]}>← left  ·  right →  ·  tap mid-air = double jump</Text>
-            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>stomp enemies 💀  ·  golden platform ✦  ·  rocket 🚀</Text>
+            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>stomp 💀 → coins  ·  ✦ golden  ·  🧊 ice (slippery!)  ·  ⭐ star</Text>
           </View>
         )}
 
@@ -935,8 +963,8 @@ export default function GameScreen(){
               </View>
             )}
             <View style={s.btn}><Text style={s.btnTxt}>TAP TO PLAY</Text></View>
-            <Text style={s.ovHint}>🚀 jetpack · 🛡️ shield · 🧲 magnet · 🥾 boots · ❤️ extra life</Text>
-            <Text style={s.ovHint}>✦ golden · 🚀 rocket · crumble · wind gusts · coin clusters</Text>
+            <Text style={s.ovHint}>🚀 jetpack · 🛡️ shield · 🧲 magnet · 🥾 boots · ❤️ life · ⭐ star</Text>
+            <Text style={s.ovHint}>✦ golden · 🚀 rocket · 🧊 ice (slippery!) · crumble · wind gusts</Text>
           </Pressable>
         )}
 
@@ -952,6 +980,7 @@ export default function GameScreen(){
               <StatPill icon="⚡" val={r.maxCombo} label="COMBO"/>
               <StatPill icon="💀" val={r.enemiesDefeated} label="STOMPED"/>
             </View>
+            {r.bestCombo>0&&<Text style={[s.goLabel,{fontSize:13,letterSpacing:3,marginTop:2}]}>ALL-TIME BEST COMBO  ⚡{r.bestCombo}</Text>}
             {leaderboard.length>0&&(
               <View style={[s.lbWrap,{borderColor:"rgba(255,255,255,0.12)"}]}>
                 {leaderboard.slice(0,3).map((sc,i)=><LbRow key={i} score={sc} rank={i} dark={true}/>)}
