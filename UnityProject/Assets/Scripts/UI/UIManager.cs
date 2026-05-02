@@ -5,28 +5,28 @@ using TMPro;
 namespace DoodleClimb.UI
 {
     /// <summary>
-    /// Manages all UI panels and text displays.
+    /// Manages all UI panels, score display, combo counter, and game-state transitions.
     ///
-    /// Panels:
-    ///   startMenuPanel  — shown before first game
-    ///   modeSelectPanel — Normal / vs AI / Watch AI mode buttons
-    ///   hudPanel        — in-game heads-up display
-    ///   gameOverPanel   — end-of-run results screen
+    /// Panels: startMenuPanel | modeSelectPanel | hudPanel | gameOverPanel
     ///
-    /// Watch AI Mode:
-    ///   A "WATCHING AI" label appears in the HUD so it's always clear
-    ///   you're in spectator mode. The game over screen shows "AI Run Complete!"
-    ///   and the AI's score as the headline number.
+    /// Combo display:
+    ///   UpdateCombo(int) — shows a punch-scale label when the player chains landings.
+    ///   Appears from combo ≥ 3, scales up at milestone thresholds (5, 8, 10, 15),
+    ///   fades out automatically after 2 s with no new landing.
+    ///
+    /// Watch AI mode:
+    ///   "WATCHING AI" banner replaces score; game over shows "AI Run Complete!".
     /// </summary>
     public class UIManager : MonoBehaviour
     {
-        // ── Inspector ─────────────────────────────────────────────────────────────
+        // ── Panels ────────────────────────────────────────────────────────────────
         [Header("Panels")]
         public CanvasGroup startMenuPanel;
         public CanvasGroup modeSelectPanel;
         public CanvasGroup hudPanel;
         public CanvasGroup gameOverPanel;
 
+        // ── Start Menu ────────────────────────────────────────────────────────────
         [Header("Start Menu")]
         public TextMeshProUGUI bestScoreText;
         public TextMeshProUGUI skillTierText;
@@ -34,24 +34,30 @@ namespace DoodleClimb.UI
         public Button          playVsAIButton;
         public Button          modeSelectButton;
 
-        [Header("Mode Select Panel")]
+        // ── Mode Select ───────────────────────────────────────────────────────────
+        [Header("Mode Select")]
         public Button          normalModeButton;
         public Button          vsAIModeButton;
-        public Button          watchAIButton;       // NEW — spectate the AI
+        public Button          watchAIButton;
         public Button          modeSelectBackButton;
         public TextMeshProUGUI aiProfileStatusText;
 
+        // ── HUD ───────────────────────────────────────────────────────────────────
         [Header("HUD")]
         public TextMeshProUGUI playerScoreText;
         public TextMeshProUGUI aiScoreText;
-        public GameObject      aiScoreContainer;    // shown in vs-AI mode
-        public TextMeshProUGUI watchingAILabel;     // NEW — "WATCHING AI" banner
+        public GameObject      aiScoreContainer;
+        public TextMeshProUGUI watchingAILabel;
+
+        [Header("HUD — Combo")]
+        public TextMeshProUGUI comboText;
 
         [Header("HUD — AI Challenge")]
         public GameObject      challengeContainer;
         public TextMeshProUGUI challengeTargetText;
         public TextMeshProUGUI challengeProgressText;
 
+        // ── Game Over ─────────────────────────────────────────────────────────────
         [Header("Game Over")]
         public TextMeshProUGUI gameOverTitleText;
         public TextMeshProUGUI playerFinalScoreText;
@@ -84,6 +90,11 @@ namespace DoodleClimb.UI
         private bool             _isWatchAIMode;
         private float            _challengeTarget;
 
+        // ── Combo state ───────────────────────────────────────────────────────────
+        private float   _comboTimer;
+        private int[]   _comboThresholds = { 3, 5, 8, 10, 15 };
+        private bool    _comboVisible;
+
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
         {
@@ -102,6 +113,33 @@ namespace DoodleClimb.UI
             modeSelectBackButton?.onClick.AddListener(ShowStartMenu);
             restartButton?.onClick.AddListener(OnRestart);
             mainMenuButton?.onClick.AddListener(ShowStartMenu);
+        }
+
+        private void Update()
+        {
+            if (_comboTimer <= 0f) return;
+            _comboTimer -= Time.deltaTime;
+
+            if (comboText != null)
+            {
+                // Restore punch scale smoothly
+                comboText.transform.localScale = Vector3.Lerp(
+                    comboText.transform.localScale, Vector3.one, 16f * Time.deltaTime);
+
+                // Fade out in last 0.45 s
+                if (_comboTimer < 0.45f && _comboVisible)
+                {
+                    Color c = comboText.color;
+                    c.a             = _comboTimer / 0.45f;
+                    comboText.color = c;
+                }
+
+                if (_comboTimer <= 0f)
+                {
+                    _comboVisible = false;
+                    comboText.gameObject.SetActive(false);
+                }
+            }
         }
 
         // ── Panel show / hide ─────────────────────────────────────────────────────
@@ -142,18 +180,11 @@ namespace DoodleClimb.UI
                       $"Skill: {p.SkillTier}  |  Best: {p.bestScoreEver:0}";
             }
 
-            // Watch AI and vs-AI buttons only usable once AI is trained
             bool aiReady = _trainer != null && _trainer.IsProfileReady;
-            if (watchAIButton != null) watchAIButton.interactable = aiReady;
+            if (watchAIButton  != null) watchAIButton.interactable  = aiReady;
             if (vsAIModeButton != null) vsAIModeButton.interactable = aiReady;
         }
 
-        /// <summary>
-        /// Show the HUD.
-        /// showAIScore — true in vs-AI mode (shows AI score alongside player score).
-        /// isWatchAI   — true in Watch AI mode (shows "WATCHING AI" banner).
-        /// challengeTarget — challenge score target, 0 = none.
-        /// </summary>
         public void ShowHUD(bool showAIScore, bool isWatchAI, float challengeTarget)
         {
             SetPanel(startMenuPanel,  false);
@@ -165,8 +196,7 @@ namespace DoodleClimb.UI
             _isWatchAIMode = isWatchAI;
             _challengeTarget = challengeTarget;
 
-            // AI score bar: visible in vs-AI mode AND Watch AI mode.
-            // In Watch AI mode it shows the AI's climbing score.
+            // AI score container (vs-AI and Watch-AI modes)
             if (aiScoreContainer != null)
                 aiScoreContainer.SetActive(showAIScore || isWatchAI);
 
@@ -174,11 +204,14 @@ namespace DoodleClimb.UI
             if (watchingAILabel != null)
                 watchingAILabel.gameObject.SetActive(isWatchAI);
 
-            // Rename player score label in watch mode
+            // Player score text hidden in Watch AI mode
             if (playerScoreText != null)
                 playerScoreText.gameObject.SetActive(!isWatchAI);
 
-            // AI challenge bar (Normal mode only, once profile exists)
+            // Combo (always hidden at start of run)
+            HideComboImmediate();
+
+            // Challenge bar (Normal mode, once profile exists)
             bool showChallenge = !showAIScore && !isWatchAI && challengeTarget > 0f;
             if (challengeContainer != null)
                 challengeContainer.SetActive(showChallenge);
@@ -199,16 +232,16 @@ namespace DoodleClimb.UI
             SetPanel(hudPanel,        false);
             SetPanel(gameOverPanel,   true);
 
+            HideComboImmediate();
+
             bool vsAI = aiScore >= 0f && !isWatchAI;
 
-            // ── Title ──────────────────────────────────────────────────────────────
             if (gameOverTitleText != null)
                 gameOverTitleText.text = isWatchAI ? "AI Run Complete!" : "Game Over";
 
-            // ── Scores ────────────────────────────────────────────────────────────
             if (playerFinalScoreText != null)
                 playerFinalScoreText.text = isWatchAI
-                    ? $"AI Score: {playerScore:0}"   // playerScore holds AI score here
+                    ? $"AI Score: {playerScore:0}"
                     : $"Your Score: {playerScore:0}";
 
             if (aiFinalScoreContainer != null)
@@ -216,31 +249,25 @@ namespace DoodleClimb.UI
             if (vsAI && aiFinalScoreText != null)
                 aiFinalScoreText.text = $"AI Score: {aiScore:0}";
 
-            // ── Winner ────────────────────────────────────────────────────────────
             if (winnerText != null)
                 winnerText.text = vsAI
                     ? (winner == "You" ? "YOU WIN!" : "AI WINS!")
                     : "";
 
-            // ── AI learning feedback ───────────────────────────────────────────────
             if (aiLearnedText != null)
             {
                 if (!isWatchAI && aiHasTrained && _trainer != null)
-                {
-                    int runs = _trainer.GetProfile().totalRunsAnalyzed;
-                    aiLearnedText.text = $"AI trained from {runs} run(s).";
-                }
+                    aiLearnedText.text =
+                        $"AI trained from {_trainer.GetProfile().totalRunsAnalyzed} run(s).";
                 else if (isWatchAI)
                     aiLearnedText.text = "Watch another run to see the AI improve!";
                 else
                     aiLearnedText.text = "";
             }
 
-            // ── Challenge result ───────────────────────────────────────────────────
             bool showChallengeResult = !vsAI && !isWatchAI && challengeTarget > 0f;
             if (challengeResultContainer != null)
                 challengeResultContainer.SetActive(showChallengeResult);
-
             if (showChallengeResult)
             {
                 bool beat = playerScore >= challengeTarget;
@@ -248,19 +275,16 @@ namespace DoodleClimb.UI
                     challengeResultText.text = beat
                         ? "Challenge Beaten!"
                         : $"Target: {challengeTarget:0}  |  You: {playerScore:0}";
-
                 if (newTargetText != null && _trainer != null)
                 {
-                    float newTarget = _trainer.GetProfile().challengeTargetScore;
-                    newTargetText.text = beat ? $"New target: {newTarget:0}" : "";
+                    float nt = _trainer.GetProfile().challengeTargetScore;
+                    newTargetText.text = beat ? $"New target: {nt:0}" : "";
                 }
             }
 
-            // ── Skill breakdown ────────────────────────────────────────────────────
             bool showSkill = !isWatchAI && aiHasTrained && _trainer != null;
             if (skillBreakdownContainer != null)
                 skillBreakdownContainer.SetActive(showSkill);
-
             if (showSkill)
             {
                 AI.AIProfile p = _trainer.GetProfile();
@@ -272,11 +296,62 @@ namespace DoodleClimb.UI
             }
         }
 
+        // ── Combo display ─────────────────────────────────────────────────────────
+        public void UpdateCombo(int combo)
+        {
+            if (comboText == null) return;
+
+            if (combo >= 3)
+            {
+                // Determine label and colour
+                string label;
+                Color  col;
+                if (combo >= 15)      { label = $"INSANE x{combo}!"; col = new Color(1.0f, 0.2f, 0.0f); }
+                else if (combo >= 10) { label = $"ON FIRE x{combo}!";  col = new Color(1.0f, 0.5f, 0.0f); }
+                else if (combo >= 5)  { label = $"COMBO x{combo}!";   col = new Color(1.0f, 0.90f, 0.1f); }
+                else                  { label = $"x{combo}!";          col = new Color(0.5f, 1.0f, 0.8f); }
+
+                // Check if this is a threshold hit — punch scale
+                bool isThreshold = System.Array.IndexOf(_comboThresholds, combo) >= 0;
+
+                col.a           = 1f;
+                comboText.color = col;
+                comboText.text  = label;
+
+                if (!_comboVisible || isThreshold)
+                {
+                    comboText.gameObject.SetActive(true);
+                    _comboVisible = true;
+                }
+
+                if (isThreshold)
+                    comboText.transform.localScale = Vector3.one * 1.45f;
+
+                _comboTimer = isThreshold ? 2.0f : Mathf.Max(_comboTimer, 1.6f);
+            }
+            else
+            {
+                // Combo below threshold — let existing display fade out naturally
+                if (_comboTimer <= 0f)
+                    HideComboImmediate();
+            }
+        }
+
+        private void HideComboImmediate()
+        {
+            _comboVisible = false;
+            _comboTimer   = 0f;
+            if (comboText != null)
+            {
+                comboText.gameObject.SetActive(false);
+                comboText.transform.localScale = Vector3.one;
+            }
+        }
+
         // ── HUD live update ───────────────────────────────────────────────────────
         public void UpdateScoreDisplay(
             float playerScore, float aiScore, float challengeTarget)
         {
-            // In Watch AI mode show AI's score in the AI score label
             if (_isWatchAIMode)
             {
                 if (aiScoreText != null)
@@ -298,22 +373,18 @@ namespace DoodleClimb.UI
         }
 
         // ── Button handlers ───────────────────────────────────────────────────────
-        private void OnPlayNormal()
-        {
+        private void OnPlayNormal() =>
             _gameManager?.StartGame(Game.GameModeManager.GameMode.NormalPlay);
-        }
 
         private void OnPlayVsAI()
         {
-            if (_trainer == null || !_trainer.IsProfileReady)
-            { ShowNoAIDataMessage(); return; }
+            if (_trainer == null || !_trainer.IsProfileReady) { ShowNoAIDataMessage(); return; }
             _gameManager?.StartGame(Game.GameModeManager.GameMode.VsAI);
         }
 
         private void OnWatchAI()
         {
-            if (_trainer == null || !_trainer.IsProfileReady)
-            { ShowNoAIDataMessage(); return; }
+            if (_trainer == null || !_trainer.IsProfileReady) { ShowNoAIDataMessage(); return; }
             _gameManager?.StartGame(Game.GameModeManager.GameMode.WatchAI);
         }
 

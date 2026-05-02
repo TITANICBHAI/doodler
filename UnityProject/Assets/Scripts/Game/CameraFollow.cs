@@ -3,20 +3,12 @@ using UnityEngine;
 namespace DoodleClimb.Game
 {
     /// <summary>
-    /// Smoothly follows the highest active character upward.
-    /// The camera NEVER moves downward.
+    /// Smoothly follows the highest active character upward (camera never moves down).
     ///
-    /// Dynamic Zoom (vs-AI mode only):
-    ///   Zooms out ONLY when the PLAYER goes below the camera bottom edge.
-    ///   This happens when the AI climbs higher and the camera follows the AI,
-    ///   leaving the player behind.  The zoom restores immediately once the
-    ///   player is back in frame.  The AI falling below never triggers the
-    ///   zoom — the player doesn't need to watch the AI fall.
-    ///
-    /// Follow Mode:
-    ///   Both      — follows the highest of player and AI (default vs-AI)
-    ///   PlayerOnly — ignores AI transform (Normal mode)
-    ///   AIOnly    — ignores player transform (Watch AI mode)
+    /// Features:
+    ///   • Dynamic zoom — zooms out ONLY when the PLAYER falls below the camera edge
+    ///   • Screen shake — ShakeCamera(intensity, duration) for punchy death / spring hits
+    ///   • FollowMode — Both | PlayerOnly | AIOnly
     /// </summary>
     public class CameraFollow : MonoBehaviour
     {
@@ -42,7 +34,7 @@ namespace DoodleClimb.Game
         public float minCameraY = 0f;
 
         [Header("Dynamic Zoom")]
-        [Tooltip("Zoom out automatically to keep both characters on screen.")]
+        [Tooltip("Zoom out automatically to keep the PLAYER on screen in vs-AI mode.")]
         public bool enableDynamicZoom = true;
 
         [Tooltip("Smallest orthographic size (closest zoom).")]
@@ -51,16 +43,26 @@ namespace DoodleClimb.Game
         [Tooltip("Largest orthographic size (furthest zoom).")]
         public float maxOrthographicSize = 16f;
 
-        [Tooltip("Extra padding below the lower character when zooming out.")]
+        [Tooltip("Extra bottom padding when computing required zoom.")]
         public float zoomPadding = 2f;
 
-        [Tooltip("How quickly the zoom lerps to the target value.")]
+        [Tooltip("How quickly the zoom lerps to its target.")]
         [Range(1f, 10f)]
         public float zoomSpeed = 3f;
+
+        [Header("Screen Shake")]
+        [Range(0f, 1f)]
+        public float shakeDecay = 8f;
 
         // ── Internal ──────────────────────────────────────────────────────────────
         private float  _highestReachedY;
         private Camera _cam;
+
+        // Shake state
+        private float   _shakeIntensity;
+        private float   _shakeDuration;
+        private float   _shakeTimer;
+        private Vector3 _shakeOffset;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
@@ -76,9 +78,9 @@ namespace DoodleClimb.Game
         {
             if (_cam == null) return;
 
+            // ── Follow ─────────────────────────────────────────────────────────────
             float targetY = GetFocusY();
 
-            // Ratchet: only ever move upward
             if (targetY > _highestReachedY)
                 _highestReachedY = targetY;
 
@@ -89,13 +91,17 @@ namespace DoodleClimb.Game
                 desiredY,
                 followSpeed * Time.deltaTime);
 
+            // ── Screen shake ───────────────────────────────────────────────────────
+            UpdateShake();
+
             transform.position = new Vector3(
-                transform.position.x,
-                newY,
+                transform.position.x + _shakeOffset.x,
+                newY                 + _shakeOffset.y,
                 transform.position.z);
 
-            // Dynamic zoom — keep both characters visible
-            if (enableDynamicZoom && followMode == FollowMode.Both
+            // ── Dynamic zoom ───────────────────────────────────────────────────────
+            if (enableDynamicZoom
+                && followMode == FollowMode.Both
                 && playerTransform    != null && playerTransform.gameObject.activeSelf
                 && aiPlayerTransform  != null && aiPlayerTransform.gameObject.activeSelf)
             {
@@ -103,7 +109,6 @@ namespace DoodleClimb.Game
             }
             else
             {
-                // Smoothly restore default zoom when not needed
                 _cam.orthographicSize = Mathf.Lerp(
                     _cam.orthographicSize,
                     minOrthographicSize,
@@ -111,18 +116,50 @@ namespace DoodleClimb.Game
             }
         }
 
+        // ── Screen shake ──────────────────────────────────────────────────────────
+        /// <summary>
+        /// Trigger a camera shake.
+        /// intensity: maximum pixel offset in world units.
+        /// duration: seconds the shake runs before dying out.
+        /// </summary>
+        public void ShakeCamera(float intensity, float duration)
+        {
+            _shakeIntensity = Mathf.Max(_shakeIntensity, intensity);
+            _shakeDuration  = duration;
+            _shakeTimer     = duration;
+        }
+
+        private void UpdateShake()
+        {
+            if (_shakeTimer <= 0f)
+            {
+                _shakeOffset    = Vector3.zero;
+                _shakeIntensity = 0f;
+                return;
+            }
+
+            _shakeTimer -= Time.deltaTime;
+
+            // Intensity decays over the duration
+            float t       = _shakeTimer / Mathf.Max(0.001f, _shakeDuration);
+            float current = _shakeIntensity * t;
+
+            _shakeOffset = (Vector3)Random.insideUnitCircle * current;
+
+            // Also decay stored intensity
+            _shakeIntensity = Mathf.Lerp(_shakeIntensity, 0f, shakeDecay * Time.deltaTime);
+        }
+
         // ── Dynamic zoom ──────────────────────────────────────────────────────────
         private void UpdateDynamicZoom()
         {
-            // Only zoom out to keep the PLAYER in view.
-            // If the AI is the one falling behind, stay zoomed in on the player —
-            // the player doesn't need to see the AI below them.
-            float playerY  = playerTransform.position.y;
+            // Zoom out ONLY to keep the PLAYER in view.
+            // AI falling behind does not trigger zoom.
+            float playerY   = playerTransform.position.y;
             float camBottom = transform.position.y - _cam.orthographicSize;
 
             if (playerY < camBottom + zoomPadding)
             {
-                // Player is below (or near) the camera bottom — zoom out to show them
                 float offset   = transform.position.y - playerY;
                 float required = Mathf.Max(minOrthographicSize, offset + zoomPadding);
                 float target   = Mathf.Clamp(required, minOrthographicSize, maxOrthographicSize);
@@ -132,7 +169,6 @@ namespace DoodleClimb.Game
             }
             else
             {
-                // Player is already visible — smoothly restore default zoom
                 _cam.orthographicSize = Mathf.Lerp(
                     _cam.orthographicSize, minOrthographicSize, zoomSpeed * Time.deltaTime);
             }
@@ -161,28 +197,22 @@ namespace DoodleClimb.Game
         }
 
         // ── Public API ────────────────────────────────────────────────────────────
-        /// <summary>
-        /// Call at game start / restart to snap camera to the spawn point instantly.
-        /// </summary>
         public void ResetTo(float worldY)
         {
             _highestReachedY = worldY;
+            _shakeTimer      = 0f;
+            _shakeIntensity  = 0f;
+            _shakeOffset     = Vector3.zero;
             transform.position = new Vector3(
                 transform.position.x,
                 worldY + verticalOffset,
                 transform.position.z);
-
             if (_cam != null) _cam.orthographicSize = minOrthographicSize;
         }
 
         public void SetFollowMode(FollowMode mode) => followMode = mode;
 
-        /// <summary>Top of the visible area in world space.</summary>
-        public float TopY => transform.position.y +
-            (_cam != null ? _cam.orthographicSize : 0f);
-
-        /// <summary>Bottom of the visible area in world space.</summary>
-        public float BottomY => transform.position.y -
-            (_cam != null ? _cam.orthographicSize : 0f);
+        public float TopY    => transform.position.y + (_cam != null ? _cam.orthographicSize : 0f);
+        public float BottomY => transform.position.y - (_cam != null ? _cam.orthographicSize : 0f);
     }
 }

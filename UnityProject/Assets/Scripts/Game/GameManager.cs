@@ -86,6 +86,10 @@ namespace DoodleClimb.Game
                 ? _trainer.GetProfile().challengeTargetScore : 0f;
 
             uiManager?.UpdateScoreDisplay(_playerScore, _aiScore, challengeTarget);
+
+            // Combo display
+            int combo = (player != null && player.gameObject.activeSelf) ? player.Combo : 0;
+            uiManager?.UpdateCombo(combo);
         }
 
         // ── Game flow ─────────────────────────────────────────────────────────────
@@ -240,6 +244,7 @@ namespace DoodleClimb.Game
             bool vsAI  = _modeManager != null && _modeManager.IsVsAI;
             bool aiWon = vsAI && aiPlayer != null && aiPlayer.IsAlive;
 
+            cameraFollow?.ShakeCamera(0.55f, 0.45f);
             _recorder?.StopRecording(_playerScore);
 
             if (_trainer != null)

@@ -52,12 +52,17 @@ namespace DoodleClimb.Platforms
         public float maxMovingChance    = 0.30f;
         public float maxBreakableChance = 0.20f;
         public float maxTemporaryChance = 0.15f;
+        public float maxSpringChance    = 0.12f;
+
+        [Header("Height Threshold — Spring Platforms")]
+        public float springStartHeight  = 15f;
 
         // ── Platform Personality System ───────────────────────────────────────────
         // Additive modifiers set by ApplySkillProfile() after training.
         private float _skillMovingBonus    = 0f;
         private float _skillBreakableBonus = 0f;
         private float _skillTemporaryBonus = 0f;
+        private float _skillSpringBonus    = 0f;
         private float _skillWidthPenalty   = 0f;
 
         // ── Internal state ────────────────────────────────────────────────────────
@@ -100,6 +105,9 @@ namespace DoodleClimb.Platforms
 
             // Imprecise movers face more moving platforms
             _skillMovingBonus = Mathf.Lerp(0f, 0.15f, 1f - p.movementSmoothness);
+
+            // Better players get more spring platforms as a reward
+            _skillSpringBonus = Mathf.Lerp(0f, 0.06f, p.jumpPrecision);
 
             // Accurate landers face narrower platforms (fair challenge)
             _skillWidthPenalty = Mathf.Lerp(0f, 0.4f, p.landingAccuracy);
@@ -231,22 +239,30 @@ namespace DoodleClimb.Platforms
                 ? Mathf.Min(maxTemporaryChance,
                     (height - temporaryStartHeight) / 200f * maxTemporaryChance)
                 : 0f;
+            float springBase = height > springStartHeight
+                ? Mathf.Min(maxSpringChance,
+                    (height - springStartHeight) / 100f * maxSpringChance)
+                : 0f;
 
             // Add skill-based modifiers
             float movingChance    = Mathf.Clamp01(movingBase    + _skillMovingBonus);
             float breakableChance = Mathf.Clamp01(breakableBase + _skillBreakableBonus);
             float temporaryChance = Mathf.Clamp01(temporaryBase + _skillTemporaryBonus);
+            float springChance    = Mathf.Clamp01(springBase    + _skillSpringBonus);
 
-            // Cap total special chance at 70% so there's always a floor of statics
-            float total = movingChance + breakableChance + temporaryChance;
-            if (total > 0.70f)
+            // Cap total special chance at 72% so there's always a floor of statics
+            float total = movingChance + breakableChance + temporaryChance + springChance;
+            if (total > 0.72f)
             {
-                float scale   = 0.70f / total;
+                float scale   = 0.72f / total;
                 movingChance    *= scale;
                 breakableChance *= scale;
                 temporaryChance *= scale;
+                springChance    *= scale;
             }
 
+            if (roll < springChance)    return Platform.PlatformType.Spring;
+            roll -= springChance;
             if (roll < temporaryChance) return Platform.PlatformType.Temporary;
             roll -= temporaryChance;
             if (roll < breakableChance) return Platform.PlatformType.Breakable;

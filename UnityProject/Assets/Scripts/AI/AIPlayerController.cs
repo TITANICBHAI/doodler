@@ -5,21 +5,12 @@ using UnityEngine;
 namespace DoodleClimb.AI
 {
     /// <summary>
-    /// Controls the AI clone character using two complementary systems:
+    /// Controls the AI clone using Ghost Replay and / or Behaviour AI.
     ///
-    ///   System A — Ghost Replay (when a best-run exists):
-    ///     Plays back the player's best-run position timeline.
-    ///     Naturally human because the data IS the player.
-    ///
-    ///   System B — Behaviour AI (statistical profile):
-    ///     Looks ahead at the next 3 platforms, selects the best reachable one,
-    ///     moves toward it with smooth lerp, applies learned jump timing and noise.
-    ///     Falls back to the screen centre if no platforms are found.
-    ///
-    /// Platform reachability:
-    ///     A platform is considered reachable if it's within the playfield width.
-    ///     If the nearest platform is too far horizontally, the AI skips to the next.
-    ///     Movement speed matches the trained player profile exactly.
+    /// Feel improvements (matching PlayerController):
+    ///   - Squash on landing, stretch on jump (Visual child transform)
+    ///   - Landing particle effects via VisualEffects singleton
+    ///   - Spring platform jump-force multiplier support
     /// </summary>
     [RequireComponent(typeof(Rigidbody2D))]
     public class AIPlayerController : MonoBehaviour
@@ -35,21 +26,22 @@ namespace DoodleClimb.AI
         public float overrideMoveSpeed = 0f;
         public float overrideJumpDelay = 0f;
 
-        [Header("Randomness — human imprecision simulation")]
+        [Header("Randomness")]
         [Range(0f, 1f)]
         public float noiseAmount = 0.15f;
 
         [Header("Physics")]
-        public float jumpForce = 18f;
-        public float fallGravityMultiplier = 2.5f;
+        public float jumpForce              = 18f;
+        public float fallGravityMultiplier  = 2.5f;
 
         [Header("Platform Targeting")]
-        [Tooltip("Maximum horizontal distance to a platform before it's skipped.")]
         public float maxReachableHorizontalDist = 7f;
-
-        [Tooltip("Smoothing speed for horizontal movement target.")]
         [Range(1f, 15f)]
-        public float targetSmoothSpeed = 6f;
+        public float targetSmoothSpeed          = 6f;
+
+        [Header("Squash & Stretch")]
+        [Range(5f, 20f)]
+        public float squashRestoreSpeed = 12f;
 
         // ── References ────────────────────────────────────────────────────────────
         private AIProfile                 _profile;
@@ -57,12 +49,19 @@ namespace DoodleClimb.AI
         private Platforms.PlatformSpawner _spawner;
         private Rigidbody2D               _rb;
 
-        // ── Behaviour-AI state ────────────────────────────────────────────────────
-        private float _targetX;         // smoothed target; AI lerps toward this
-        private float _rawTargetX;      // unsmoothed desired X before lerp
+        // ── Visual ────────────────────────────────────────────────────────────────
+        private Transform      _visual;
+        private SpriteRenderer _visualSR;
+        private Vector3        _normalScale;
+        private Vector3        _squashScale = Vector3.one;
+
+        // ── Behaviour state ───────────────────────────────────────────────────────
+        private float _targetX;
+        private float _rawTargetX;
         private float _lastLandTime;
         private bool  _wantsToJump;
         private bool  _isAlive;
+        private float _pendingJumpMultiplier = 1f;
 
         // ── Ghost-replay state ────────────────────────────────────────────────────
         private List<GhostFrame> _ghostFrames;
@@ -70,7 +69,7 @@ namespace DoodleClimb.AI
         private float            _replayStartTime;
         private bool             _ghostActive;
 
-        // ── Moving platform detection ─────────────────────────────────────────────
+        // ── Moving platform ───────────────────────────────────────────────────────
         private bool  _movingPlatformNearby;
         private float _movingPlatformDetectedTime;
 
@@ -80,16 +79,23 @@ namespace DoodleClimb.AI
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
         {
-            _rb          = GetComponent<Rigidbody2D>();
+            _rb             = GetComponent<Rigidbody2D>();
             _rb.constraints = RigidbodyConstraints2D.FreezeRotation;
-            _recorder    = FindObjectOfType<AIRecorder>();
-            _spawner     = FindObjectOfType<Platforms.PlatformSpawner>();
+            _recorder       = FindObjectOfType<AIRecorder>();
+            _spawner        = FindObjectOfType<Platforms.PlatformSpawner>();
+
+            Transform v = transform.Find("Visual");
+            _visual      = v != null ? v : transform;
+            _visualSR    = _visual.GetComponent<SpriteRenderer>();
+            _normalScale = _visual.localScale;
+            _squashScale = Vector3.one;
         }
 
         private void Update()
         {
             if (!_isAlive) return;
             ApplyFallGravity();
+            UpdateSquash();
 
             if (_ghostActive && (aiMode == AIMode.GhostReplay || aiMode == AIMode.Hybrid))
                 UpdateGhostReplay();
@@ -107,19 +113,43 @@ namespace DoodleClimb.AI
             if (_wantsToJump)
             {
                 _wantsToJump = false;
-                _rb.velocity = new Vector2(_rb.velocity.x, jumpForce);
+                ApplySquash(0.72f, 1.32f);
+                _rb.velocity = new Vector2(_rb.velocity.x, jumpForce * _pendingJumpMultiplier);
+                _pendingJumpMultiplier = 1f;
+
+                Game.VisualEffects.Instance?.PlayJumpDust(
+                    transform.position, CharacterColor);
             }
+        }
+
+        // ── Squash & Stretch ──────────────────────────────────────────────────────
+        private void UpdateSquash()
+        {
+            _squashScale = Vector3.Lerp(_squashScale, Vector3.one,
+                                        squashRestoreSpeed * Time.deltaTime);
+            if (_visual != null)
+                _visual.localScale = new Vector3(
+                    _normalScale.x * _squashScale.x,
+                    _normalScale.y * _squashScale.y,
+                    1f);
+        }
+
+        private void ApplySquash(float xMul, float yMul)
+        {
+            _squashScale = new Vector3(xMul, yMul, 1f);
         }
 
         // ── Initialisation ────────────────────────────────────────────────────────
         public void Initialise(AIProfile profile, bool useGhost)
         {
-            _profile      = profile;
-            _isAlive      = true;
-            _lastLandTime = Time.time;
-            _wantsToJump  = false;
-            _targetX      = 0f;
-            _rawTargetX   = 0f;
+            _profile               = profile;
+            _isAlive               = true;
+            _lastLandTime          = Time.time;
+            _wantsToJump           = false;
+            _targetX               = 0f;
+            _rawTargetX            = 0f;
+            _pendingJumpMultiplier = 1f;
+            _squashScale           = Vector3.one;
 
             if (useGhost && _recorder != null && _recorder.HasBestRun)
             {
@@ -127,12 +157,12 @@ namespace DoodleClimb.AI
                 _ghostIndex      = 0;
                 _replayStartTime = Time.time;
                 _ghostActive     = true;
-                Debug.Log($"[AIPlayerController] Ghost replay: {_ghostFrames.Count} frames.");
+                Debug.Log($"[AI] Ghost replay: {_ghostFrames.Count} frames.");
             }
             else
             {
                 _ghostActive = false;
-                Debug.Log("[AIPlayerController] Behaviour-AI active.");
+                Debug.Log("[AI] Behaviour-AI active.");
             }
         }
 
@@ -141,14 +171,12 @@ namespace DoodleClimb.AI
         {
             if (_ghostFrames == null || _ghostIndex >= _ghostFrames.Count)
             {
-                // Ghost exhausted — fall back to behaviour AI for the rest of the run
                 _ghostActive = false;
                 return;
             }
 
             float elapsed = Time.time - _replayStartTime;
 
-            // Seek forward in the timeline to match elapsed time
             while (_ghostIndex < _ghostFrames.Count - 1 &&
                    _ghostFrames[_ghostIndex + 1].time <= elapsed)
                 _ghostIndex++;
@@ -157,21 +185,18 @@ namespace DoodleClimb.AI
 
             if (aiMode == AIMode.Hybrid)
             {
-                // Hybrid: drive X velocity toward ghost X while keeping physics Y
                 _rb.velocity = new Vector2(
                     (frame.x - transform.position.x) / Time.fixedDeltaTime,
                     _rb.velocity.y);
             }
             else
             {
-                // Pure replay: lerp directly to ghost position
                 transform.position = Vector3.Lerp(
                     transform.position,
                     new Vector3(frame.x, frame.y, 0f),
                     20f * Time.deltaTime);
             }
 
-            // Fire jump at the same frame the player did
             if (frame.jumpEvent &&
                 _ghostIndex > 0 &&
                 !_ghostFrames[_ghostIndex - 1].jumpEvent)
@@ -185,7 +210,6 @@ namespace DoodleClimb.AI
         {
             if (_profile == null || _spawner == null)
             {
-                // No profile / spawner — drift toward centre so AI doesn't get stuck
                 _rawTargetX = 0f;
                 _targetX    = Mathf.Lerp(_targetX, _rawTargetX, Time.deltaTime * targetSmoothSpeed);
                 return;
@@ -196,18 +220,15 @@ namespace DoodleClimb.AI
 
             if (upcoming.Count == 0)
             {
-                // No platforms found above — move to screen centre as fallback
                 _rawTargetX = 0f;
                 _targetX    = Mathf.Lerp(_targetX, _rawTargetX, Time.deltaTime * targetSmoothSpeed);
                 return;
             }
 
-            // Pick the best reachable platform from the list
             Platforms.Platform target = FindBestReachablePlatform(upcoming);
 
             if (target == null)
             {
-                // All platforms are too far — use centre fallback
                 _rawTargetX = 0f;
             }
             else if (target.Type == Platforms.Platform.PlatformType.Moving)
@@ -217,58 +238,38 @@ namespace DoodleClimb.AI
                     _movingPlatformNearby       = true;
                     _movingPlatformDetectedTime = Time.time;
                 }
-
                 float reactionTime = _profile.reactionTime
                     + Random.Range(-noiseAmount * 0.2f, noiseAmount * 0.2f);
 
-                // Only correct for moving platform after learned reaction delay
                 if (Time.time - _movingPlatformDetectedTime > reactionTime)
                     _rawTargetX = PredictMovingPlatformX(target);
-                // else keep current _rawTargetX (don't correct yet)
             }
             else
             {
                 _movingPlatformNearby = false;
-                // Add small noise to avoid perfectly centred movement every time
                 _rawTargetX = target.transform.position.x
                               + Random.Range(-noiseAmount, noiseAmount);
             }
 
-            // Blend in the player's directional tendency
             _rawTargetX += _profile.directionBias * noiseAmount;
-
-            // Smooth the target so the AI doesn't snap direction instantly
-            _targetX = Mathf.Lerp(_targetX, _rawTargetX, Time.deltaTime * targetSmoothSpeed);
+            _targetX     = Mathf.Lerp(_targetX, _rawTargetX, Time.deltaTime * targetSmoothSpeed);
         }
 
-        /// <summary>
-        /// Scans upcoming platforms and returns the best reachable one.
-        /// Skips platforms that are too far horizontally (AI would miss).
-        /// Falls back to the nearest platform if all are technically far (screen wrap).
-        /// </summary>
         private Platforms.Platform FindBestReachablePlatform(
             List<Platforms.Platform> candidates)
         {
-            // First pass: prefer a platform within maxReachableHorizontalDist
             foreach (Platforms.Platform p in candidates)
             {
                 float hDist = Mathf.Abs(p.transform.position.x - transform.position.x);
-                if (hDist <= maxReachableHorizontalDist)
-                    return p;
+                if (hDist <= maxReachableHorizontalDist) return p;
             }
 
-            // Second pass: all platforms are far — return the closest horizontally
-            // (screen-wrap means the AI can always reach any platform eventually)
             Platforms.Platform best = null;
             float bestDist = float.MaxValue;
             foreach (Platforms.Platform p in candidates)
             {
                 float hDist = Mathf.Abs(p.transform.position.x - transform.position.x);
-                if (hDist < bestDist)
-                {
-                    bestDist = hDist;
-                    best     = p;
-                }
+                if (hDist < bestDist) { bestDist = hDist; best = p; }
             }
             return best;
         }
@@ -276,32 +277,34 @@ namespace DoodleClimb.AI
         private void ApplyBehaviourMovement()
         {
             if (_profile == null) return;
-
-            // Use trained speed — exactly matching how fast the player moved
             float speed = overrideMoveSpeed > 0f ? overrideMoveSpeed : _profile.avgMoveSpeed;
             float diff  = _targetX - transform.position.x;
             float dir   = Mathf.Abs(diff) < 0.05f ? 0f : Mathf.Sign(diff);
             float noise = Random.Range(-noiseAmount, noiseAmount) * 0.25f;
-
-            _rb.velocity = new Vector2(
-                dir * speed * (1f + noise),
-                _rb.velocity.y);
+            _rb.velocity = new Vector2(dir * speed * (1f + noise), _rb.velocity.y);
         }
 
-        // ── Predict moving platform position at arrival time ──────────────────────
         private float PredictMovingPlatformX(Platforms.Platform p)
         {
-            float vy         = Mathf.Abs(_rb.velocity.y);
-            float timeToReach = Mathf.Abs(p.transform.position.y - transform.position.y)
-                              / Mathf.Max(1f, vy);
-            return p.transform.position.x + p.HorizontalVelocity * timeToReach;
+            float vy = Mathf.Abs(_rb.velocity.y);
+            float t  = Mathf.Abs(p.transform.position.y - transform.position.y)
+                       / Mathf.Max(1f, vy);
+            return p.transform.position.x + p.HorizontalVelocity * t;
         }
 
         // ── Platform landing callback (called by Platform.cs) ─────────────────────
-        public void OnLandedOnPlatform(string platformType, bool isMovingPlatform)
+        public void OnLandedOnPlatform(
+            string platformType, bool isMovingPlatform, float jumpMultiplier = 1f)
         {
             _lastLandTime         = Time.time;
             _movingPlatformNearby = false;
+
+            ApplySquash(1.38f, platformType == "Spring" ? 0.55f : 0.65f);
+
+            Game.VisualEffects.Instance?.PlayLandDust(
+                transform.position, CharacterColor);
+
+            _pendingJumpMultiplier = jumpMultiplier;
 
             float delay = overrideJumpDelay > 0f
                 ? overrideJumpDelay
@@ -338,21 +341,32 @@ namespace DoodleClimb.AI
             _isAlive     = false;
             _rb.velocity = Vector2.zero;
             _rb.bodyType = RigidbodyType2D.Kinematic;
+
+            Game.VisualEffects.Instance?.PlayDeathBurst(
+                transform.position, CharacterColor);
+
             OnDied?.Invoke();
         }
 
         public void Revive(Vector3 position)
         {
-            transform.position = position;
-            _rb.bodyType       = RigidbodyType2D.Dynamic;
-            _rb.velocity       = Vector2.zero;
-            _isAlive           = true;
-            _targetX           = position.x;
-            _rawTargetX        = position.x;
+            transform.position     = position;
+            _rb.bodyType           = RigidbodyType2D.Dynamic;
+            _rb.velocity           = Vector2.zero;
+            _isAlive               = true;
+            _targetX               = position.x;
+            _rawTargetX            = position.x;
+            _ghostActive           = false;
+            _ghostIndex            = 0;
+            _pendingJumpMultiplier = 1f;
+            _squashScale           = Vector3.one;
+            if (_visual != null) _visual.localScale = _normalScale;
         }
 
         // ── Public getters ────────────────────────────────────────────────────────
         public float CurrentHeight => transform.position.y;
         public bool  IsAlive       => _isAlive;
+        public Color CharacterColor =>
+            _visualSR != null ? _visualSR.color : new Color(0.95f, 0.38f, 0.27f);
     }
 }
