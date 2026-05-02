@@ -116,6 +116,8 @@ interface WarpStar {id:number;x:number;y:number;vy:number;r:number;}
 interface TextPop  {id:number;x:number;y:number;vy:number;life:number;text:string;color:string;}
 interface WeatherP {id:number;x:number;y:number;vy:number;vx:number;}
 interface Gem      {id:number;x:number;y:number;collected:boolean;popT:number;}
+interface Boss     {id:number;x:number;y:number;vx:number;vy:number;hp:number;maxHp:number;ang:number;t:number;dead:boolean;deathT:number;hitT:number;}
+interface Wormhole {id:number;x:number;y:number;r:number;t:number;used:boolean;}
 
 interface GS {
   px:number;py:number;pvx:number;pvy:number;psx:number;psy:number;facing:number;eyeY:number;
