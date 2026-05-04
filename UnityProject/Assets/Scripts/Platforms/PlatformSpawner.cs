@@ -53,9 +53,19 @@ namespace DoodleClimb.Platforms
         public float maxBreakableChance = 0.20f;
         public float maxTemporaryChance = 0.15f;
         public float maxSpringChance    = 0.12f;
+        public float maxIceChance       = 0.08f;
+        public float maxConveyorChance  = 0.06f;
+        public float maxBombChance      = 0.04f;
+        public float maxGoldenChance    = 0.06f;
+        public float maxRocketChance    = 0.05f;
 
-        [Header("Height Threshold — Spring Platforms")]
+        [Header("Height Thresholds — Special Types")]
         public float springStartHeight  = 15f;
+        public float iceStartHeight     = 160f;
+        public float conveyorStartHeight= 200f;
+        public float bombStartHeight    = 240f;
+        public float goldenStartHeight  = 100f;
+        public float rocketStartHeight  = 300f;
 
         // ── Platform Personality System ───────────────────────────────────────────
         // Additive modifiers set by ApplySkillProfile() after training.
@@ -243,15 +253,41 @@ namespace DoodleClimb.Platforms
                 ? Mathf.Min(maxSpringChance,
                     (height - springStartHeight) / 100f * maxSpringChance)
                 : 0f;
+            float iceBase = height > iceStartHeight
+                ? Mathf.Min(maxIceChance,
+                    (height - iceStartHeight) / 150f * maxIceChance)
+                : 0f;
+            float conveyorBase = height > conveyorStartHeight
+                ? Mathf.Min(maxConveyorChance,
+                    (height - conveyorStartHeight) / 150f * maxConveyorChance)
+                : 0f;
+            float bombBase = height > bombStartHeight
+                ? Mathf.Min(maxBombChance,
+                    (height - bombStartHeight) / 200f * maxBombChance)
+                : 0f;
+            float goldenBase = height > goldenStartHeight
+                ? Mathf.Min(maxGoldenChance,
+                    (height - goldenStartHeight) / 200f * maxGoldenChance)
+                : 0f;
+            float rocketBase = height > rocketStartHeight
+                ? Mathf.Min(maxRocketChance,
+                    (height - rocketStartHeight) / 200f * maxRocketChance)
+                : 0f;
 
             // Add skill-based modifiers
             float movingChance    = Mathf.Clamp01(movingBase    + _skillMovingBonus);
             float breakableChance = Mathf.Clamp01(breakableBase + _skillBreakableBonus);
             float temporaryChance = Mathf.Clamp01(temporaryBase + _skillTemporaryBonus);
             float springChance    = Mathf.Clamp01(springBase    + _skillSpringBonus);
+            float iceChance       = Mathf.Clamp01(iceBase);
+            float conveyorChance  = Mathf.Clamp01(conveyorBase);
+            float bombChance      = Mathf.Clamp01(bombBase);
+            float goldenChance    = Mathf.Clamp01(goldenBase);
+            float rocketChance    = Mathf.Clamp01(rocketBase);
 
             // Cap total special chance at 72% so there's always a floor of statics
-            float total = movingChance + breakableChance + temporaryChance + springChance;
+            float total = movingChance + breakableChance + temporaryChance + springChance
+                        + iceChance + conveyorChance + bombChance + goldenChance + rocketChance;
             if (total > 0.72f)
             {
                 float scale   = 0.72f / total;
@@ -259,6 +295,11 @@ namespace DoodleClimb.Platforms
                 breakableChance *= scale;
                 temporaryChance *= scale;
                 springChance    *= scale;
+                iceChance       *= scale;
+                conveyorChance  *= scale;
+                bombChance      *= scale;
+                goldenChance    *= scale;
+                rocketChance    *= scale;
             }
 
             if (roll < springChance)    return Platform.PlatformType.Spring;
@@ -268,6 +309,16 @@ namespace DoodleClimb.Platforms
             if (roll < breakableChance) return Platform.PlatformType.Breakable;
             roll -= breakableChance;
             if (roll < movingChance)    return Platform.PlatformType.Moving;
+            roll -= movingChance;
+            if (roll < goldenChance)    return Platform.PlatformType.Golden;
+            roll -= goldenChance;
+            if (roll < iceChance)       return Platform.PlatformType.Ice;
+            roll -= iceChance;
+            if (roll < conveyorChance)  return Platform.PlatformType.Conveyor;
+            roll -= conveyorChance;
+            if (roll < rocketChance)    return Platform.PlatformType.Rocket;
+            roll -= rocketChance;
+            if (roll < bombChance)      return Platform.PlatformType.Bomb;
             return Platform.PlatformType.Static;
         }
 

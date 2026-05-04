@@ -856,9 +856,13 @@ const ENEMY_ICON:Record<EnemyType,string>={bird:"🐦",ghost:"👻",ufo:"🛸",a
 function EnemyView({e,now}:{e:Enemy;now:number}){
   if(e.dead) return null;
   const batFlap=e.type==="bat"&&Math.sin(now/80)>0;
+  const ghostFlicker=e.type==="ghost"?0.40+Math.abs(Math.sin(now/320+e.id))*0.55:1;
+  const ufoGlow=e.type==="ufo"?`0px 0px ${6+Math.sin(now/280)*4}px rgba(120,255,180,0.7)`:undefined;
+  const asteroidTilt=e.type==="asteroid"?e.wt*90:0;
+  const sz=e.type==="bat"?22:e.type==="ufo"?28:26;
   return(
     <View style={{position:"absolute",left:e.x,top:e.y,width:38,height:32,alignItems:"center",justifyContent:"center"}}>
-      <Text style={{fontSize:e.type==="bat"?22:26,transform:[{scaleX:e.vx>0?-1:1},{scaleY:batFlap?1.15:0.85}],opacity:e.type==="bat"?0.88:1}}>
+      <Text style={{fontSize:sz,transform:[{scaleX:e.vx>0?-1:1},{scaleY:batFlap?1.15:0.85},{rotate:`${asteroidTilt}deg`}],opacity:e.type==="bat"?0.88:ghostFlicker,textShadow:ufoGlow} as any}>
         {ENEMY_ICON[e.type]}
       </Text>
     </View>

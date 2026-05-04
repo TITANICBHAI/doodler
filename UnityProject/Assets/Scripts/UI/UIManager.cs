@@ -391,6 +391,41 @@ namespace DoodleClimb.UI
         private void OnOpenModeSelect() => ShowModeSelect();
         private void OnRestart()        => _gameManager?.RestartGame();
 
+        // ── Achievement toast ─────────────────────────────────────────────────────
+        /// <summary>
+        /// Show a temporary on-screen achievement unlock toast.
+        /// Drives a coroutine: fade in → hold → fade out.
+        /// </summary>
+        public void ShowAchievementUnlock(string icon, string title)
+        {
+            if (achievementToastText != null)
+                StartCoroutine(AchievementToastRoutine(icon, title));
+        }
+
+        [Header("Achievement Toast")]
+        public TextMeshProUGUI achievementToastText;
+        public CanvasGroup     achievementToastGroup;
+
+        private System.Collections.IEnumerator AchievementToastRoutine(string icon, string title)
+        {
+            if (achievementToastGroup == null) yield break;
+
+            achievementToastText.text = $"{icon}  {title}  UNLOCKED!";
+
+            // Fade in
+            float t = 0f;
+            while (t < 0.25f) { t += Time.deltaTime; achievementToastGroup.alpha = t / 0.25f; yield return null; }
+            achievementToastGroup.alpha = 1f;
+
+            // Hold
+            yield return new WaitForSeconds(2.2f);
+
+            // Fade out
+            t = 0.35f;
+            while (t > 0f) { t -= Time.deltaTime; achievementToastGroup.alpha = t / 0.35f; yield return null; }
+            achievementToastGroup.alpha = 0f;
+        }
+
         // ── Helpers ───────────────────────────────────────────────────────────────
         private void SetPanel(CanvasGroup group, bool visible)
         {
