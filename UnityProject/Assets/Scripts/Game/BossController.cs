@@ -38,6 +38,7 @@ namespace DoodleClimb.Game
         private float   _hitTimer;
         private bool    _isDiving;
         private bool    _isDead;
+        private bool    _isEnraged;
         private float   _halfScreenWidth;
         private int     _comboAtKill;
 
@@ -58,6 +59,7 @@ namespace DoodleClimb.Game
             _hitTimer  = 0f;
             _isDiving  = false;
             _isDead    = false;
+            _isEnraged = false;
 
             // Start moving in a random direction
             float sign = Random.value < 0.5f ? 1f : -1f;
@@ -121,6 +123,20 @@ namespace DoodleClimb.Game
             player.Rigidbody.velocity = new Vector2(player.Rigidbody.velocity.x, 14f);
 
             VisualEffects.Instance?.PlayLandDust(transform.position, Color.red);
+
+            // Enrage at 1 HP — faster patrol and shorter dive interval
+            if (_hp == 1 && !_isEnraged)
+            {
+                _isEnraged    = true;
+                patrolSpeed  *= 1.65f;
+                diveInterval *= 0.55f;
+
+                var sr = GetComponentInChildren<SpriteRenderer>();
+                if (sr != null) sr.color = new Color(1f, 0.18f, 0.02f);
+
+                FindObjectOfType<CameraFollow>()?.ShakeCamera(0.35f, 0.4f);
+                VisualEffects.Instance?.PlayDeathBurst(transform.position, new Color(1f, 0.3f, 0f));
+            }
 
             if (_hp <= 0)
                 StartCoroutine(DieRoutine(player));

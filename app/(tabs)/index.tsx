@@ -1211,7 +1211,7 @@ export default function GameScreen(){
         )}
         {phase==="play"&&r.windT>0&&(
           <View style={[s.coinHud,{top:topPad+66}]}>
-            <Text style={[s.coinHudTxt,{color:zc.txt,fontSize:11,opacity:0.50}]}>{r.windF>0?"→ WIND":"WIND ←"}</Text>
+            <Text style={[s.coinHudTxt,{color:r.windF>0?"#88CCFF":"#FFCC44",fontSize:11,opacity:0.70}]}>{r.windF>0?`→ WIND ${Math.abs(r.windF)>80?"!!":Math.abs(r.windF)>55?"!":""}`:` WIND ← ${Math.abs(r.windF)>80?"!!":Math.abs(r.windF)>55?"!":""}`}</Text>
           </View>
         )}
 

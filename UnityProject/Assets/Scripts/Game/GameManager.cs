@@ -51,6 +51,9 @@ namespace DoodleClimb.Game
         private int _gemsCollected;
         private int _bossKills;
         private int _enemiesDefeated;
+        private int _batsKilled;
+        private int _wormholesUsed;
+        private int _nearMisses;
 
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
@@ -111,6 +114,9 @@ namespace DoodleClimb.Game
             _gemsCollected  = 0;
             _bossKills      = 0;
             _enemiesDefeated = 0;
+            _batsKilled     = 0;
+            _wormholesUsed  = 0;
+            _nearMisses     = 0;
 
             int levelSeed = System.Environment.TickCount;
 
@@ -333,6 +339,9 @@ namespace DoodleClimb.Game
         public void NotifyGemCollected(int pts){ _gemsCollected++; _playerScore += pts; }
         public void NotifyBossKilled(int pts) { _bossKills++; _enemiesDefeated++; _playerScore += pts; }
         public void NotifyEnemyDefeated()     { _enemiesDefeated++; }
+        public void NotifyBatKilled()         { _batsKilled++; _enemiesDefeated++; }
+        public void NotifyWormholeUsed()      { _wormholesUsed++; }
+        public void NotifyNearMiss()          { _nearMisses++; }
 
         // ── Public getters ────────────────────────────────────────────────────────
         public float PlayerScore    => _playerScore;
@@ -341,5 +350,8 @@ namespace DoodleClimb.Game
         public int   CoinsCollected => _coinsCollected;
         public int   GemsCollected  => _gemsCollected;
         public int   BossKills      => _bossKills;
+        public int   BatsKilled     => _batsKilled;
+        public int   WormholesUsed  => _wormholesUsed;
+        public int   NearMisses     => _nearMisses;
     }
 }
