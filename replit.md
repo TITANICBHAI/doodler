@@ -1,79 +1,93 @@
 # DoodleClimb — Project Notes
 
 ## Architecture
-- **Frontend**: Expo / React Native (port 8081) — entire game lives in `app/(tabs)/index.tsx`
-- **Backend**: Express + TypeScript (port 5000) — serves API + static landing page at `server/templates/landing-page.html`
+- **Frontend**: Expo / React Native (port 8081) — entire game in `app/(tabs)/index.tsx` (~1250 lines)
+- **Backend**: Express + TypeScript (port 5000) — API + static landing page at `server/templates/landing-page.html`
 - **Unity**: Complete C# codebase mirror in `UnityProject/Assets/Scripts/`
 
-## Game: `app/(tabs)/index.tsx` (~1013 lines)
-Single-file 60fps canvas-less game using React Native Views + `requestAnimationFrame`.
+## Game: `app/(tabs)/index.tsx`
+Single-file 60fps game using React Native Views + `requestAnimationFrame`.
 All mutable state lives in a `useRef<GS>` game-state object; re-renders triggered via `setT(t=>t+1)`.
 
 ### Physics constants
-`GRAVITY=1750, JUMP_VEL=-690, SPRING_VEL=-1155, DJUMP_VEL=-570, JETPACK_VY=-345, PLAYER_SPD=248, FALL_MULT=1.88`
+`GRAVITY=1750, JUMP_VEL=-690, SPRING_VEL=-1155, ROCKET_VEL=-1760, DJUMP_VEL=-570`
+`JETPACK_VY=-345, PLAYER_SPD=248, FALL_MULT=1.88, MAX_GAP=112`
 Player size: `PW=42, PH=50, PLH=14`
 
-### Platform types (`PType`)
-`"static" | "moving" | "spring" | "breakable" | "crumble"`
-- **crumble**: shakes for 0.52 s (orange tint, ⚠ icons) then breaks with particle burst
+### Platform types (`PType`) — 8 types
+`"static" | "moving" | "spring" | "breakable" | "crumble" | "golden" | "rocket" | "ice"`
+- **ice** 🧊: slippery (amplified horizontal momentum on landing)
+- **golden** ✦: score bonus (25 + combo × 5)
+- **rocket** 🚀: ultra-high bounce (ROCKET_VEL = -1760)
 
-### Power-up types (`PUType`)
-`"jetpack" | "shield" | "magnet" | "boots"`
-- **boots** (🥾): 5 s of boosted jumps (SPRING_VEL × 0.82); blinking HUD bar when < 1 s left
+### Power-up types (`PUType`) — 6 types
+`"jetpack" | "shield" | "magnet" | "boots" | "heart" | "star"`
+- **star** ⭐: 3.5 s invincibility + rainbow aura + clears all enemies
+- **heart** ❤️: extra life (or +30 pts if full)
+- **magnet** 🧲: pulls coins AND gems within 180 px
 
-### Enemy types (`EnemyType`)
+### Enemy types (`EnemyType`) — 4 types
 `"bird" | "ghost" | "ufo" | "asteroid"`
-Off-screen enemies show blinking edge arrows (◀ ▶) as warning indicators.
+
+### Boss enemy (`Boss` interface)
+- Spawns at score 480+; one at a time; 80×80 red orb (👹)
+- 3 HP — stomp 3 times to kill; HP bar displayed above
+- On kill: +280 pts × combo, drops 3 gems + 5 coins; screen shake
+- Touch damage (not stomp): removes shield/life
+
+### Wormhole portals (`Wormhole` interface)
+- Spawns at score 850+ (Deep Space zone)
+- Enter to teleport up 180-260 px instantly + score bonus
+- Animated double-ring with rotating glow (🌀)
+
+### Collectibles
+- **Coins** 🪙: clusters + singles; magnet-attracted; streak bonuses (×3, ×5, ×10)
+- **Gems** 💎: spawn above 280m; 20 pts × combo; magnet-attracted; purple rotating diamond
 
 ### Zone system (4 zones)
-| Zone | Score | Label |
-|------|-------|-------|
-| 0 | 0 | ☁ Sunrise |
-| 1 | 150 | 🌅 Sunset |
-| 2 | 400 | 🌙 Night Sky |
-| 3 | 800 | 🚀 Deep Space |
+| Score | Zone |
+|-------|------|
+| 0     | ☁ Sunrise |
+| 150   | 🌅 Sunset |
+| 400   | 🌙 Night Sky |
+| 800   | 🚀 Deep Space |
 
-Zone transitions trigger a full-screen tinted flash (0.75 s).
-
-### Key GS fields added across rounds
-- `displayScore` — smoothly animated score counter (approaches `score` at 10× gap/s)
-- `windF / windT / windNextT` — episodic wind gusts in Night/Space zones (score > 350)
-- `bootsT` — bounce boots power-up timer
-- `coinStreak / coinStreakT` — consecutive coin bonuses (×3 +5, ×5 +12, ×10 +28)
-- `weatherParts: WeatherP[]` — screen-space rain (Sunrise/Sunset) and snow (Night)
+### Key GS fields
+`displayScore, windF/windT, coinStreak, starT, bestCombo, gemsCollected, nearMissCooldown, bosses[], wormholes[], bossKills`
 
 ### Persistent storage (`localStorage`)
 - `dc_best` — all-time best score
-- `dc_lb` — top-3 leaderboard (JSON array of numbers)
+- `dc_lb` — top-3 leaderboard
+- `dc_bc` — all-time best combo
+- `dc_db_YYYY-M-D` — daily best score (resets each calendar day)
 
-### Visual features (cumulative)
-Parallax clouds, twinkling stars, aurora borealis, city silhouette with lit windows,
-sun (Sunrise + Sunset), crescent moon, planets with rings, shooting stars,
-warp star field (Deep Space), rainbow trail (combo ≥ 10), speed lines (fast fall),
-weather particles (rain / snow), wind streaks, floating score pop-ups, zone flash,
-platform pre-glow, ground decoration, combo burst particles, squash-and-stretch.
+### Visual features
+Parallax clouds, twinkling stars, aurora borealis, city silhouette, sun/moon/planets,
+shooting stars, warp star field, rainbow trail, speed lines, weather (rain/snow),
+wind streaks, floating score pop-ups, zone flash, platform pre-glow, squash-and-stretch,
+combo fire aura, star rainbow aura, wormhole rings, boss HP bar, gem glow.
 
-### HUD
-Score (animated) · Best · Lives (♥♥♥) · Zone label · Height progress bar ·
-Power-up timer bars (blink when expiring) · Coin counter · Wind direction label ·
-Combo multiplier · Milestone banner · Double-jump / stomp flash texts
+### HUD (in-game)
+Score · Best · Lives (♥♥♥) · Zone label · Height bar · Power-up timer bars ·
+Coin + Gem counter · Wind label · Combo × · Milestone banner · Double-jump / stomp flash
+
+### Game-Over screen
+Score · Medal (🥉🥈🥇💎) · NEW BEST · Stats row (Coins / Gems / Combo / Stomped) ·
+Boss Kills · All-time Best Combo · Daily Best · Leaderboard top-3
 
 ---
 
-## GitHub Integration — NOT CONNECTED
-The user dismissed the GitHub OAuth flow twice. The GitHub connector ID is:
-`connector:ccfg_github_01K4B9XD3VRVD2F99YM91YTCAF`
-
-To create a repo named **"doodler"** on the user's GitHub account, one of the following
-is required:
-1. User completes the Replit GitHub OAuth flow (preferred — use `proposeIntegration` again)
-2. User provides a **GitHub Personal Access Token** (PAT) with `repo` scope as a secret
-   — store it as `GITHUB_TOKEN` via the environment-secrets skill, then use the
-   GitHub REST API: `POST https://api.github.com/user/repos`
+## GitHub Integration
+- Repo: `github.com/TITANICBHAI/doodler`
+- Push via: `bash scripts/push-github.sh` (uses `GITHUB_PERSONAL_ACCESS_TOKEN` secret)
+- Auth format: `https://${TOKEN}@github.com/...` (token-only, no username prefix)
 
 ## Workflows
-- `Start Backend`: `npm run server:dev` (Express on port 5000)
-- `Start Frontend`: `npm run expo:dev` (Expo on port 8081)
+- `Start Backend`: `npm run server:dev` (Express port 5000)
+- `Start Frontend`: `npm run expo:dev` (Expo port 8081)
+- `Push to GitHub`: `bash scripts/push-github.sh`
+- `Build Debug APK`: `bash scripts/build-debug-apk.sh` (exports JS bundle; prints APK build instructions)
+
 HMR handles most frontend changes — no restart needed for code edits.
 
 ## Unity Mirror

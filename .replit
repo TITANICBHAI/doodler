@@ -39,6 +39,10 @@ args = "Start App"
 task = "workflow.run"
 args = "Push to GitHub"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Build Debug APK"
+
 [[workflows.workflow]]
 name = "Start App"
 author = "agent"
@@ -80,6 +84,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "bash scripts/push-github.sh"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "Build Debug APK"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/build-debug-apk.sh"
 
 [workflows.workflow.metadata]
 outputType = "console"

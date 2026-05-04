@@ -31,6 +31,9 @@ function getBestCombo(): number {
 function saveBestCombo(v: number): void {
   try { (globalThis as any).localStorage?.setItem?.("dc_bc", String(v)); } catch {}
 }
+function getDailyKey():string{const d=new Date();return`dc_db_${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;}
+function getDailyBest():number{try{return Math.max(0,parseInt((globalThis as any).localStorage?.getItem?.(getDailyKey())||"0")||0);}catch{return 0;}}
+function saveDailyBest(v:number):void{try{(globalThis as any).localStorage?.setItem?.(getDailyKey(),String(v));}catch{}}
 function getLeaderboard(): number[] {
   try { return JSON.parse((globalThis as any).localStorage?.getItem?.("dc_lb") || "[]") || []; } catch { return []; }
 }
@@ -133,8 +136,8 @@ interface GS {
   ssTimer:number;
   plats:Plat[];parts:Particle[];trail:TrailPt[];clouds:Cloud[];
   coins:Coin[];powerUps:PU[];planets:Planet[];shootStars:SShoot[];enemies:Enemy[];
-  warpStars:WarpStar[];textPops:TextPop[];weatherParts:WeatherP[];gems:Gem[];
-  gemsCollected:number;nearMissCooldown:number;
+  warpStars:WarpStar[];textPops:TextPop[];weatherParts:WeatherP[];gems:Gem[];bosses:Boss[];wormholes:Wormhole[];
+  gemsCollected:number;nearMissCooldown:number;bossKills:number;
   phase:Phase;input:number;
   shakeX:number;shakeY:number;shakeT:number;
   pid:number;
@@ -176,6 +179,13 @@ function mkEnemy(gs:GS,y:number,score:number):Enemy{
   return{id:gs.pid++,x:ml?SW+30:-65,y:y+10+Math.random()*55,vx:(ml?-1:1)*spd,vy:tp==="asteroid"?40+Math.random()*70:0,type:tp,wt:Math.random()*6,dead:false};
 }
 
+function mkBoss(gs:GS,y:number):Boss{
+  return{id:gs.pid++,x:20+Math.random()*(SW-110),y,vx:(Math.random()<0.5?1:-1)*88,vy:0,hp:3,maxHp:3,ang:0,t:0,dead:false,deathT:0,hitT:0};
+}
+function mkWormhole(gs:GS,y:number):Wormhole{
+  return{id:gs.pid++,x:44+Math.random()*(SW-88),y,r:32,t:0,used:false};
+}
+
 // ─── Coin cluster spawner ─────────────────────────────────────────────────────
 function spawnCluster(gs:GS,cx:number,y:number){
   const count=3+Math.floor(Math.random()*3); // 3, 4, or 5
@@ -206,8 +216,8 @@ function mkGS(best:number):GS{
     windF:0,windT:0,windNextT:12,
     ssTimer:9,
     plats:[],parts:[],trail:[],clouds:[],coins:[],powerUps:[],planets:[],shootStars:[],enemies:[],
-    warpStars:[],textPops:[],weatherParts:[],gems:[],
-    gemsCollected:0,nearMissCooldown:0,
+    warpStars:[],textPops:[],weatherParts:[],gems:[],bosses:[],wormholes:[],
+    gemsCollected:0,nearMissCooldown:0,bossKills:0,
     phase:"menu",input:0,shakeX:0,shakeY:0,shakeT:0,pid:0,
   };
   gs.plats.push(mkStat(gs,startY+PH,SW/2-52,104));
@@ -353,6 +363,53 @@ function update(gs:GS,dt:number,now:number){
     }
   }
 
+  // Bosses
+  for(const boss of gs.bosses){
+    if(boss.dead){boss.deathT=Math.max(0,boss.deathT-dt);continue;}
+    if(boss.hitT>0) boss.hitT=Math.max(0,boss.hitT-dt);
+    boss.t+=dt;boss.ang=(boss.ang+dt*2.2)%(Math.PI*2);
+    boss.x+=boss.vx*dt;
+    if(boss.x<12||boss.x>SW-100){boss.vx*=-1;}
+    const divePhase=boss.t%5;
+    if(divePhase<1.4){boss.vy+=(220-boss.vy)*dt*3.5;}else{boss.vy+=(0-boss.vy)*dt*3;}
+    boss.y+=boss.vy*dt;
+    const minBossY=gs.scrollY-250;if(boss.y<minBossY)boss.y=minBossY;
+    if(gs.pvy>0){
+      if(Math.hypot(gs.px+PW/2-(boss.x+40),gs.py+PH-(boss.y+40))<46){
+        boss.hp--;boss.hitT=0.45;gs.pvy=SPRING_VEL*0.88;gs.canDJump=true;gs.shakeT=0.25;
+        emit(gs,boss.x+40,boss.y+40,"#FF6633",16);
+        if(boss.hp<=0){
+          boss.dead=true;boss.deathT=1.2;gs.bossKills++;gs.enemiesDefeated++;
+          const bonus=Math.round(280*comboMult(gs.combo));gs.score+=bonus;
+          emit(gs,boss.x+40,boss.y+40,"#FFD700",36);emit(gs,boss.x+40,boss.y+40,"#FF4400",20);
+          gs.shakeT=0.6;pop(gs,boss.x+40,boss.y-28,`👹 BOSS DOWN! +${bonus}`,"#FF8800");
+          for(let gi=0;gi<3;gi++) gs.gems.push({id:gs.pid++,x:boss.x+40+(gi-1)*28,y:boss.y+20,collected:false,popT:0});
+          for(let ci=0;ci<5;ci++) gs.coins.push({id:gs.pid++,x:boss.x+40+(ci-2)*20,y:boss.y+30,collected:false,popT:0});
+        }else{pop(gs,boss.x+40,boss.y-24,`💥 ${boss.hp} HP LEFT`,"#FF6633");}
+      }
+    }
+    if(!boss.dead&&gs.invincT<=0&&gs.starT<=0){
+      if(Math.hypot(gs.px+PW/2-(boss.x+40),gs.py+PH/2-(boss.y+40))<44&&!(gs.pvy>0&&gs.py+PH<boss.y+28)){
+        if(gs.shielded){gs.shielded=false;gs.invincT=2.0;emit(gs,boss.x+40,boss.y+40,"#50A0FF",14);}
+        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.5;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;}
+        else{gs.phase="dead";gs.shakeT=0.7;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
+      }
+    }
+  }
+
+  // Wormholes
+  for(const wh of gs.wormholes){
+    if(wh.used)continue;
+    wh.t+=dt;
+    if(Math.hypot(pcx-wh.x,pcy-wh.y)<wh.r+10){
+      wh.used=true;
+      const dist=Math.round(180+Math.random()*80);gs.py-=dist;gs.scrollY-=dist;
+      const bonus=Math.round(dist*0.55);gs.score+=bonus;
+      emit(gs,wh.x,wh.y,"#A040FF",30);emit(gs,wh.x,wh.y,"#00CCFF",18);
+      pop(gs,wh.x,wh.y-44,`🌀 WORMHOLE! +${bonus}`,"#C060FF");gs.shakeT=0.45;gs.pvy=JUMP_VEL;
+    }
+  }
+
   // Power-ups
   for(const pu of gs.powerUps){
     if(pu.col){pu.bt=Math.max(0,pu.bt-dt);continue;}
@@ -459,6 +516,10 @@ function update(gs:GS,dt:number,now:number){
       gs.enemies.push(mkEnemy(gs,topY,gs.score));
     if(gs.score>600&&Math.random()<0.12&&!gs.planets.some(p=>Math.abs(p.y-topY)<SH*0.6))
       gs.planets.push(mkPlanet(gs,topY+Math.random()*SH*0.5));
+    if(gs.score>480&&Math.random()<0.035&&!gs.bosses.some(b=>!b.dead))
+      gs.bosses.push(mkBoss(gs,topY-90));
+    if(gs.score>850&&Math.random()<0.022&&!gs.wormholes.some(w=>!w.used&&Math.abs(w.y-topY)<SH*1.5))
+      gs.wormholes.push(mkWormhole(gs,topY-110));
   }
   const topCloud=gs.clouds.length?Math.min(...gs.clouds.map(c=>c.y)):gs.startY;
   if(topCloud>gs.scrollY-SH*1.5) gs.clouds.push(mkCloud(gs,topCloud-SH*(0.4+Math.random()*0.5)));
@@ -520,9 +581,11 @@ function update(gs:GS,dt:number,now:number){
   const cutY=gs.scrollY+SH+300;
   gs.plats   =gs.plats.filter(p=>p.y<cutY);
   gs.coins   =gs.coins.filter(c=>c.y<cutY||!c.collected);
-  gs.gems    =gs.gems.filter(g=>g.y<cutY||!g.collected);
-  gs.powerUps=gs.powerUps.filter(p=>p.y<cutY);
-  gs.enemies =gs.enemies.filter(e=>!e.dead&&(e.vx<0?e.x>-90:e.x<SW+90)&&e.y<cutY);
+  gs.gems      =gs.gems.filter(g=>g.y<cutY||!g.collected);
+  gs.powerUps  =gs.powerUps.filter(p=>p.y<cutY);
+  gs.enemies   =gs.enemies.filter(e=>!e.dead&&(e.vx<0?e.x>-90:e.x<SW+90)&&e.y<cutY);
+  gs.bosses    =gs.bosses.filter(b=>!b.dead||b.deathT>0);
+  gs.wormholes =gs.wormholes.filter(w=>!w.used&&w.y<cutY);
   gs.planets =gs.planets.filter(p=>p.y-gs.scrollY*p.par<SH+200);
   gs.clouds  =gs.clouds.filter(c=>c.y-gs.scrollY*c.par<SH+150);
 
@@ -693,8 +756,45 @@ function GemView({gm,now}:{gm:Gem;now:number}){
   const pulse=gm.collected?1+(1-gm.popT)*0.6:0.88+Math.sin(now/260+gm.id)*0.12;
   const glow=`rgba(${180+Math.round(Math.sin(now/200+gm.id)*30)},60,255,${(0.22+Math.sin(now/180)*0.10).toFixed(2)})`;
   return(
-    <View style={{position:"absolute",left:gm.x-12,top:gm.y-12,width:24,height:24,opacity:gm.collected?gm.popT:1,transform:[{scale:pulse},{rotate:"45deg"}],borderRadius:4,backgroundColor:"#9B30FF",borderWidth:2.5,borderColor:"#C870FF",alignItems:"center",justifyContent:"center",shadowColor:glow,shadowRadius:8,shadowOpacity:1}}>
+    <View style={{position:"absolute",left:gm.x-12,top:gm.y-12,width:24,height:24,opacity:gm.collected?gm.popT:1,transform:[{scale:pulse},{rotate:"45deg"}],borderRadius:4,backgroundColor:"#9B30FF",borderWidth:2.5,borderColor:"#C870FF",alignItems:"center",justifyContent:"center",boxShadow:`0px 0px 8px ${glow}`} as any}>
       <View style={{width:9,height:9,borderRadius:2,backgroundColor:"rgba(255,255,255,0.52)",transform:[{rotate:"45deg"}]}}/>
+    </View>
+  );
+}
+
+// ─── Boss ─────────────────────────────────────────────────────────────────────
+function BossView({boss}:{boss:Boss}){
+  if(boss.dead&&boss.deathT<=0) return null;
+  const op=boss.dead?boss.deathT:1;
+  const flash=boss.hitT>0.2;
+  const hpPct=boss.hp/boss.maxHp;
+  const hpCol=hpPct>0.6?"#44EE44":hpPct>0.3?"#FFD700":"#FF2222";
+  const sc=1+(boss.hitT>0?boss.hitT*0.3:0);
+  return(
+    <View style={{position:"absolute",left:boss.x,top:boss.y,opacity:op,alignItems:"center",width:80}}>
+      {!boss.dead&&<View style={{width:80,height:7,backgroundColor:"rgba(0,0,0,0.45)",borderRadius:4,marginBottom:5}}>
+        <View style={{width:80*hpPct,height:7,backgroundColor:hpCol,borderRadius:4}}/>
+      </View>}
+      <View style={{width:80,height:80,borderRadius:40,backgroundColor:flash?"#FF6633":"#7B0000",borderWidth:3.5,borderColor:flash?"#FFAA44":"#FF2200",alignItems:"center",justifyContent:"center",transform:[{scale:sc}]}}>
+        <Text style={{fontSize:36,lineHeight:40}}>👹</Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── Wormhole ─────────────────────────────────────────────────────────────────
+function WormholeView({wh,now}:{wh:Wormhole;now:number}){
+  if(wh.used) return null;
+  const pulse=0.76+Math.sin(now/240)*0.24;
+  const rot1=`${((now/1200)%(Math.PI*2)).toFixed(3)}rad`;
+  const rot2=`${(-(now/800)%(Math.PI*2)).toFixed(3)}rad`;
+  return(
+    <View style={{position:"absolute",left:wh.x-wh.r,top:wh.y-wh.r,width:wh.r*2,height:wh.r*2,alignItems:"center",justifyContent:"center"}}>
+      <View style={{position:"absolute",width:wh.r*2,height:wh.r*2,borderRadius:wh.r,borderWidth:3,borderColor:`rgba(160,64,255,${(0.55+Math.sin(now/300)*0.2).toFixed(2)})`,transform:[{rotate:rot1}]}}/>
+      <View style={{position:"absolute",width:wh.r*1.4,height:wh.r*1.4,borderRadius:wh.r,borderWidth:2.5,borderColor:`rgba(0,200,255,${(0.45+Math.sin(now/220)*0.2).toFixed(2)})`,transform:[{rotate:rot2}]}}/>
+      <View style={{width:wh.r*0.85,height:wh.r*0.85,borderRadius:wh.r,backgroundColor:`rgba(100,0,240,${(0.38*pulse).toFixed(2)})`,alignItems:"center",justifyContent:"center"}}>
+        <Text style={{fontSize:18,transform:[{scale:pulse}]}}>🌀</Text>
+      </View>
     </View>
   );
 }
@@ -807,6 +907,7 @@ export default function GameScreen(){
   const nowRef=useRef<number>(0);
   const [phase,setPhase]=useState<Phase>("menu");
   const [leaderboard,setLeaderboard]=useState<number[]>(()=>getLeaderboard());
+  const [dailyBest,setDailyBest]=useState(()=>getDailyBest());
 
   const loop=useCallback((ts:number)=>{
     if(prevTs.current===0) prevTs.current=ts;
@@ -821,7 +922,11 @@ export default function GameScreen(){
   useEffect(()=>{rafRef.current=requestAnimationFrame(loop);return()=>cancelAnimationFrame(rafRef.current);},[loop]);
 
   useEffect(()=>{
-    if(phase==="dead") setLeaderboard(addToLeaderboard(gs.current.score));
+    if(phase==="dead"){
+      setLeaderboard(addToLeaderboard(gs.current.score));
+      const sc=gs.current.score;
+      if(sc>getDailyBest()){saveDailyBest(sc);setDailyBest(sc);}
+    }
   },[phase]);
 
   useEffect(()=>{
@@ -896,6 +1001,8 @@ export default function GameScreen(){
           {r.powerUps.map(p=><PUView key={p.id} pu={p}/>)}
           {r.coins.map(c=><CoinView key={c.id} c={c} now={now}/>)}
           {r.gems.map(gm=><GemView key={gm.id} gm={gm} now={now}/>)}
+          {r.wormholes.map(w=><WormholeView key={w.id} wh={w} now={now}/>)}
+          {r.bosses.map(b=><BossView key={b.id} boss={b}/>)}
           {r.enemies.map(e=><EnemyView key={e.id} e={e}/>)}
 
           {/* Trail — flame colors when boosting */}
@@ -908,7 +1015,7 @@ export default function GameScreen(){
           })}
 
           {r.parts.map((p,i)=>(<View key={i} style={{position:"absolute",left:p.x-p.r,top:p.y-p.r,width:p.r*2,height:p.r*2,borderRadius:p.r,backgroundColor:p.color,opacity:Math.max(0,p.life)}}/>))}
-          {r.textPops.map(tp=>(<Text key={tp.id} style={{position:"absolute",left:tp.x-38,top:tp.y,color:tp.color,fontSize:13,fontWeight:"900",opacity:Math.max(0,tp.life),letterSpacing:0.5,textShadowColor:"rgba(0,0,0,0.35)",textShadowOffset:{width:0,height:1},textShadowRadius:3}}>{tp.text}</Text>))}
+          {r.textPops.map(tp=>(<Text key={tp.id} style={{position:"absolute",left:tp.x-38,top:tp.y,color:tp.color,fontSize:13,fontWeight:"900",opacity:Math.max(0,tp.life),letterSpacing:0.5,textShadow:"0px 1px 3px rgba(0,0,0,0.35)"} as any}>{tp.text}</Text>))}
           <SpeedLines gs={r} col={zc.txt} now={now}/>
           <PlayerView gs={r} plrBg={zc.plrBg} plrBrd={zc.plrBrd} combo={r.combo} comboT={r.comboT}/>
         </View>
@@ -1002,7 +1109,7 @@ export default function GameScreen(){
         {phase==="play"&&r.score===0&&(
           <View style={s.hintWrap} pointerEvents="none">
             <Text style={[s.hintTxt,{color:zc.txt}]}>← left  ·  right →  ·  tap mid-air = double jump</Text>
-            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>stomp 💀 → coins  ·  ✦ golden  ·  🧊 ice (slippery!)  ·  ⭐ star</Text>
+            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>stomp 💀 · 💎 gems · 👹 boss (3 stomps!) · 🌀 wormhole teleport</Text>
           </View>
         )}
 
@@ -1017,7 +1124,7 @@ export default function GameScreen(){
             )}
             <View style={s.btn}><Text style={s.btnTxt}>TAP TO PLAY</Text></View>
             <Text style={s.ovHint}>🚀 jetpack · 🛡️ shield · 🧲 magnet · 🥾 boots · ❤️ life · ⭐ star</Text>
-            <Text style={s.ovHint}>✦ golden · 🚀 rocket · 🧊 ice (slippery!) · crumble · wind gusts</Text>
+            <Text style={s.ovHint}>✦ golden · 🚀 rocket · 🧊 ice · crumble · 👹 boss (3-hit!) · 🌀 wormhole</Text>
           </Pressable>
         )}
 
@@ -1035,7 +1142,9 @@ export default function GameScreen(){
               <StatPill icon="⚡" val={r.maxCombo} label="COMBO"/>
               <StatPill icon="💀" val={r.enemiesDefeated} label="STOMPED"/>
             </View>
+            {r.bossKills>0&&<Text style={[s.goLabel,{fontSize:13,letterSpacing:3,marginTop:2}]}>👹 BOSS KILLS: {r.bossKills}</Text>}
             {r.bestCombo>0&&<Text style={[s.goLabel,{fontSize:13,letterSpacing:3,marginTop:2}]}>ALL-TIME BEST COMBO  ⚡{r.bestCombo}</Text>}
+            {dailyBest>0&&<Text style={[s.goLabel,{fontSize:12,letterSpacing:2,marginTop:1,opacity:0.65}]}>📅 TODAY'S BEST  {dailyBest} m</Text>}
             {leaderboard.length>0&&(
               <View style={[s.lbWrap,{borderColor:"rgba(255,255,255,0.12)"}]}>
                 {leaderboard.slice(0,3).map((sc,i)=><LbRow key={i} score={sc} rank={i} dark={true}/>)}
@@ -1104,11 +1213,11 @@ const s=StyleSheet.create({
   zoneLabel: {position:"absolute",left:16},
   zoneTxt:   {fontSize:12,fontWeight:"700",opacity:0.55,letterSpacing:0.5},
   stompWrap: {position:"absolute",left:0,right:0,top:SH*0.24,alignItems:"center"},
-  stompTxt:  {fontSize:26,fontWeight:"900",color:"#FF8844",letterSpacing:2,textShadowColor:"rgba(0,0,0,0.25)",textShadowOffset:{width:0,height:2},textShadowRadius:6},
+  stompTxt:  {fontSize:26,fontWeight:"900",color:"#FF8844",letterSpacing:2,textShadow:"0px 2px 6px rgba(0,0,0,0.25)"} as any,
   djumpWrap: {position:"absolute",left:0,right:0,top:SH*0.30,alignItems:"center"},
   djumpTxt:  {fontSize:16,fontWeight:"900",color:"#50FFBB",letterSpacing:2},
   comboWrap: {position:"absolute",left:0,right:0,top:SH*0.35,alignItems:"center"},
-  comboTxt:  {fontSize:42,fontWeight:"900",letterSpacing:1,textShadowColor:"rgba(0,0,0,0.2)",textShadowOffset:{width:0,height:2},textShadowRadius:6},
+  comboTxt:  {fontSize:42,fontWeight:"900",letterSpacing:1,textShadow:"0px 2px 6px rgba(0,0,0,0.2)"} as any,
   msWrap:    {position:"absolute",left:0,right:0,top:SH*0.20,alignItems:"center"},
   msPill:    {backgroundColor:"rgba(39,192,99,0.92)",paddingHorizontal:24,paddingVertical:10,borderRadius:30},
   msTxt:     {fontSize:22,fontWeight:"900",color:"white",letterSpacing:1},
