@@ -65,6 +65,7 @@ const ACHIEVEMENTS:Achievement[]=[
   {id:"no_damage",  icon:"🛡",  title:"Flawless",       desc:"Reach 300m without losing a life"},
   {id:"bat_slayer", icon:"🦇",  title:"Bat Slayer",     desc:"Stomp 3 bats in one run"},
   {id:"combo_god",  icon:"⚡",  title:"Combo God",      desc:"Reach combo ×25 in one run"},
+  {id:"dodger",     icon:"🕹",  title:"Dodger",         desc:"Dodge 3 UFO shots in one run"},
 ];
 function getAllTimeAch():string[]{try{return JSON.parse((globalThis as any).localStorage?.getItem?.("dc_ach")||"[]")||[];}catch{return[];}}
 function saveAch(ids:string[]):void{try{(globalThis as any).localStorage?.setItem?.("dc_ach",JSON.stringify(ids));}catch{}}
@@ -152,6 +153,7 @@ interface WeatherP {id:number;x:number;y:number;vy:number;vx:number;}
 interface Gem      {id:number;x:number;y:number;collected:boolean;popT:number;}
 interface Boss     {id:number;x:number;y:number;vx:number;vy:number;hp:number;maxHp:number;ang:number;t:number;dead:boolean;deathT:number;hitT:number;enraged:boolean;}
 interface Wormhole {id:number;x:number;y:number;r:number;t:number;used:boolean;}
+interface UfoProj  {id:number;x:number;y:number;vy:number;life:number;}
 
 interface GS {
   px:number;py:number;pvx:number;pvy:number;psx:number;psy:number;facing:number;eyeY:number;
@@ -170,6 +172,7 @@ interface GS {
   warpStars:WarpStar[];textPops:TextPop[];weatherParts:WeatherP[];gems:Gem[];bosses:Boss[];wormholes:Wormhole[];
   gemsCollected:number;nearMissCooldown:number;nearMissCount:number;bossKills:number;batsKilled:number;
   iceHits:number;wormholeUsed:boolean;bombRidden:boolean;achNewRun:string[];achPopT:number;achPopText:string;
+  ufoProjs:UfoProj[];ufoProjDodged:number;
   savedBest:number;newBestFlashed:boolean;
   conveyorDirT:number;conveyorDir:number;
   phase:Phase;input:number;
@@ -256,9 +259,10 @@ function mkGS(best:number):GS{
     windF:0,windT:0,windNextT:12,
     ssTimer:9,
     plats:[],parts:[],trail:[],clouds:[],coins:[],powerUps:[],planets:[],shootStars:[],enemies:[],
-    warpStars:[],textPops:[],weatherParts:[],gems:[],bosses:[],wormholes:[],
+    warpStars:[],textPops:[],weatherParts:[],gems:[],bosses:[],wormholes:[],ufoProjs:[],
     gemsCollected:0,nearMissCooldown:0,nearMissCount:0,bossKills:0,batsKilled:0,
     iceHits:0,wormholeUsed:false,bombRidden:false,achNewRun:[],achPopT:0,achPopText:"",
+    ufoProjDodged:0,
     savedBest:best,newBestFlashed:false,
     conveyorDirT:0,conveyorDir:1,
     phase:"menu",input:0,shakeX:0,shakeY:0,shakeT:0,pid:0,
@@ -510,8 +514,41 @@ function update(gs:GS,dt:number,now:number){
     } else {
       e.x+=e.vx*dt;e.y+=e.vy*dt;e.wt+=dt;
       if(e.type==="ghost"||e.type==="ufo") e.y+=Math.sin(e.wt*2.5)*28*dt;
+      // UFO fires a slow projectile downward every ~3.5 s when near player horizontally
+      if(e.type==="ufo"){
+        const prevWt=e.wt-dt,SHOT_INT=3.5;
+        if(Math.floor(e.wt/SHOT_INT)>Math.floor(prevWt/SHOT_INT)){
+          const projX=e.x+18,projY=e.y+30;
+          const screenY=projY-gs.scrollY;
+          if(screenY>-60&&screenY<SH+60)
+            gs.ufoProjs.push({id:gs.pid++,x:projX,y:projY,vy:190+Math.random()*60,life:1});
+        }
+      }
     }
   }
+
+  // UFO projectile update + collision
+  const pcx=gs.px+PW/2,pcy=gs.py+PH/2;
+  for(const pr of gs.ufoProjs){
+    if(pr.life<=0) continue;
+    pr.y+=pr.vy*dt;pr.life-=dt*0.6;
+    if(gs.invincT<=0){
+      const dx=pcx-pr.x,dy=pcy-pr.y;
+      if(Math.hypot(dx,dy)<20){
+        // HIT
+        pr.life=0;gs.shakeT=0.20;
+        if(!gs.shielded){
+          gs.lives--;emit(gs,gs.px+PW/2,gs.py,"#FF3300",18);gs.invincT=1.8;
+          gs.conveyorDirT=0;
+          if(gs.lives<=0){gs.phase="dead";return;}
+        } else {gs.shielded=false;emit(gs,gs.px+PW/2,gs.py,"#00A0FF",14);}
+      } else if(Math.hypot(dx,dy)<50&&pr.y>gs.py+PH){
+        // near-miss dodge
+        gs.ufoProjDodged++;
+      }
+    }
+  }
+  gs.ufoProjs=gs.ufoProjs.filter(p=>p.life>0&&p.y-gs.scrollY<SH+80);
 
   // Enemy collision
   if(gs.invincT<=0){
@@ -592,8 +629,9 @@ function update(gs:GS,dt:number,now:number){
     if(gs.enemiesDefeated>=10)tryUnlock("stomp_10");
     if(gs.nearMissCount>=5)  tryUnlock("lucky_duck");
     if(gs.score>=300&&gs.lives===3) tryUnlock("no_damage");
-    if(gs.batsKilled>=3)     tryUnlock("bat_slayer");
-    if(gs.combo>=25)         tryUnlock("combo_god");
+    if(gs.batsKilled>=3)      tryUnlock("bat_slayer");
+    if(gs.combo>=25)          tryUnlock("combo_god");
+    if(gs.ufoProjDodged>=3)   tryUnlock("dodger");
   })();
   if(gs.achPopT>0) gs.achPopT-=dt;
 
@@ -1147,6 +1185,7 @@ export default function GameScreen(){
           {r.wormholes.map(w=><WormholeView key={w.id} wh={w} now={now}/>)}
           {r.bosses.map(b=><BossView key={b.id} boss={b}/>)}
           {r.enemies.map(e=><EnemyView key={e.id} e={e} now={now}/>)}
+          {r.ufoProjs.map(pr=><View key={pr.id} style={{position:"absolute",left:pr.x-6,top:pr.y-gs.scrollY-6,width:12,height:12,borderRadius:6,backgroundColor:"#00FF88",opacity:Math.min(1,pr.life),boxShadow:"0px 0px 6px rgba(0,255,136,0.8)"} as any}/>)}
 
           {/* Trail — flame colors when boosting */}
           {r.trail.map((t,i)=>{

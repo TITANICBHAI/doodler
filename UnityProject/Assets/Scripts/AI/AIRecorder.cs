@@ -245,6 +245,21 @@ namespace DoodleClimb.AI
             _latestReactionTime = reactionTime;
         }
 
+        // ── Near-miss event (called by GameManager) ────────────────────────────────
+        /// <summary>
+        /// Called when the player avoids a hazard by a narrow margin (e.g. UFO shot).
+        /// Useful for tracking reaction accuracy in the AI profile.
+        /// </summary>
+        public void RecordNearMiss()
+        {
+            // Bump the near-miss count on the most recent action if available
+            if (_currentRun.Count > 0)
+            {
+                var last = _currentRun[^1];
+                last.nearMissFlag = true;
+            }
+        }
+
         // ── Full reset ────────────────────────────────────────────────────────────
         public void ClearAll()
         {
