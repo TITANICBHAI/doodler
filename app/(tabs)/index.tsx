@@ -63,6 +63,8 @@ const ACHIEVEMENTS:Achievement[]=[
   {id:"air_king",   icon:"✈",  title:"Air King",       desc:"Air chain ×5 stomps in one chain"},
   {id:"conveyor",   icon:"▶",  title:"Conveyor Rider", desc:"Land on a conveyor platform"},
   {id:"no_damage",  icon:"🛡",  title:"Flawless",       desc:"Reach 300m without losing a life"},
+  {id:"bat_slayer", icon:"🦇",  title:"Bat Slayer",     desc:"Stomp 3 bats in one run"},
+  {id:"combo_god",  icon:"⚡",  title:"Combo God",      desc:"Reach combo ×25 in one run"},
 ];
 function getAllTimeAch():string[]{try{return JSON.parse((globalThis as any).localStorage?.getItem?.("dc_ach")||"[]")||[];}catch{return[];}}
 function saveAch(ids:string[]):void{try{(globalThis as any).localStorage?.setItem?.("dc_ach",JSON.stringify(ids));}catch{}}
@@ -166,7 +168,7 @@ interface GS {
   plats:Plat[];parts:Particle[];trail:TrailPt[];clouds:Cloud[];
   coins:Coin[];powerUps:PU[];planets:Planet[];shootStars:SShoot[];enemies:Enemy[];
   warpStars:WarpStar[];textPops:TextPop[];weatherParts:WeatherP[];gems:Gem[];bosses:Boss[];wormholes:Wormhole[];
-  gemsCollected:number;nearMissCooldown:number;nearMissCount:number;bossKills:number;
+  gemsCollected:number;nearMissCooldown:number;nearMissCount:number;bossKills:number;batsKilled:number;
   iceHits:number;wormholeUsed:boolean;bombRidden:boolean;achNewRun:string[];achPopT:number;achPopText:string;
   savedBest:number;newBestFlashed:boolean;
   conveyorDirT:number;conveyorDir:number;
@@ -255,7 +257,7 @@ function mkGS(best:number):GS{
     ssTimer:9,
     plats:[],parts:[],trail:[],clouds:[],coins:[],powerUps:[],planets:[],shootStars:[],enemies:[],
     warpStars:[],textPops:[],weatherParts:[],gems:[],bosses:[],wormholes:[],
-    gemsCollected:0,nearMissCooldown:0,nearMissCount:0,bossKills:0,
+    gemsCollected:0,nearMissCooldown:0,nearMissCount:0,bossKills:0,batsKilled:0,
     iceHits:0,wormholeUsed:false,bombRidden:false,achNewRun:[],achPopT:0,achPopText:"",
     savedBest:best,newBestFlashed:false,
     conveyorDirT:0,conveyorDir:1,
@@ -522,6 +524,7 @@ function update(gs:GS,dt:number,now:number){
         e.dead=true;gs.pvy=JUMP_VEL*0.88;gs.py=e.y-PH;
         gs.psx=1.45;gs.psy=0.60;gs.canDJump=true;
         gs.combo++;gs.comboT=2.8;gs.stompFlashT=0.65;gs.enemiesDefeated++;gs.airStomps++;
+        if(e.type==="bat") gs.batsKilled++;
         const airBonus=gs.airStomps>=2?gs.airStomps*20:15;gs.score+=airBonus;
         if(gs.airStomps>=5&&unlockAch("air_king",gs.achNewRun)){const a=ACHIEVEMENTS.find(x=>x.id==="air_king");if(a){gs.achPopText=`${a.icon} ${a.title}`;gs.achPopT=3.0;}}
         if(gs.airStomps>=2) pop(gs,e.x,e.y-20,`✈ AIR CHAIN ×${gs.airStomps}!`,"#FF88AA");
@@ -589,6 +592,8 @@ function update(gs:GS,dt:number,now:number){
     if(gs.enemiesDefeated>=10)tryUnlock("stomp_10");
     if(gs.nearMissCount>=5)  tryUnlock("lucky_duck");
     if(gs.score>=300&&gs.lives===3) tryUnlock("no_damage");
+    if(gs.batsKilled>=3)     tryUnlock("bat_slayer");
+    if(gs.combo>=25)         tryUnlock("combo_god");
   })();
   if(gs.achPopT>0) gs.achPopT-=dt;
 
@@ -1290,6 +1295,7 @@ export default function GameScreen(){
             </View>
             <View style={[s.statsRow,{marginTop:6}]}>
               {r.bossKills>0&&<StatPill icon="👹" val={r.bossKills} label="BOSSES"/>}
+              {r.batsKilled>0&&<StatPill icon="🦇" val={r.batsKilled} label="BATS"/>}
               {r.nearMissCount>0&&<StatPill icon="😅" val={r.nearMissCount} label="CLOSE!"/>}
               {r.wormholeUsed&&<StatPill icon="🌀" val={1} label="WORMHOLE"/>}
               {r.bombRidden&&<StatPill icon="💣" val={1} label="BOMB"/>}
