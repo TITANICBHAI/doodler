@@ -167,6 +167,7 @@ interface GS {
   gemsCollected:number;nearMissCooldown:number;nearMissCount:number;bossKills:number;
   iceHits:number;wormholeUsed:boolean;bombRidden:boolean;achNewRun:string[];achPopT:number;achPopText:string;
   savedBest:number;newBestFlashed:boolean;
+  conveyorDirT:number;conveyorDir:number;
   phase:Phase;input:number;
   shakeX:number;shakeY:number;shakeT:number;
   pid:number;
@@ -255,6 +256,7 @@ function mkGS(best:number):GS{
     gemsCollected:0,nearMissCooldown:0,nearMissCount:0,bossKills:0,
     iceHits:0,wormholeUsed:false,bombRidden:false,achNewRun:[],achPopT:0,achPopText:"",
     savedBest:best,newBestFlashed:false,
+    conveyorDirT:0,conveyorDir:1,
     phase:"menu",input:0,shakeX:0,shakeY:0,shakeT:0,pid:0,
   };
   gs.plats.push(mkStat(gs,startY+PH,SW/2-52,104));
@@ -300,6 +302,7 @@ function update(gs:GS,dt:number,now:number){
   // Player horizontal (wind push when active, not on jetpack)
   const curSpd=PLAYER_SPD*(gs.speedT>0?1.65:1);
   gs.pvx=gs.input*curSpd+(gs.windT>0&&gs.jetpackT<=0?gs.windF*0.38:0);
+  if(gs.conveyorDirT>0){gs.conveyorDirT=Math.max(0,gs.conveyorDirT-dt);gs.pvx+=gs.conveyorDir*PLAYER_SPD*1.1*(gs.conveyorDirT/0.5);}
   if(gs.input!==0) gs.facing=gs.input;
 
   // Vertical
@@ -335,7 +338,7 @@ function update(gs:GS,dt:number,now:number){
         // Jump velocity based on platform type
         const isRocket=p.type==="rocket",isSpring=p.type==="spring",isIce=p.type==="ice",bootBoost=gs.bootsT>0&&!isSpring&&!isRocket;
         if(isIce){gs.pvx=gs.pvx*(1.55+Math.random()*0.35)+(Math.random()-0.5)*30;gs.iceHits++;} // slippery slide
-        if(p.type==="conveyor"){gs.pvx=p.dir*320;pop(gs,p.x+p.w/2,p.y-20,p.dir>0?"▶▶ PUSH!":"◀◀ PUSH!","#FF8040");}
+        if(p.type==="conveyor"){gs.conveyorDirT=0.55;gs.conveyorDir=p.dir;emit(gs,p.x+p.w/2,p.y,"#FF8040",8);}
         gs.pvy=isRocket?ROCKET_VEL:isSpring?SPRING_VEL:bootBoost?Math.round(SPRING_VEL*0.82):JUMP_VEL;
         gs.psx=isRocket?0.70:isSpring?1.58:bootBoost?1.52:1.40;
         gs.psy=isRocket?1.45:isSpring?0.50:bootBoost?0.55:0.63;
@@ -1263,7 +1266,7 @@ export default function GameScreen(){
             )}
             <View style={s.btn}><Text style={s.btnTxt}>TAP TO PLAY</Text></View>
             <Text style={s.ovHint}>🚀 jetpack · 🛡️ shield · 🧲 magnet · 🥾 boots · ❤️ life · ⭐ star</Text>
-            <Text style={s.ovHint}>✦ golden · 🚀 rocket · 🧊 ice · 💣 bomb · ⚡ speed · 👹 boss (enrages!) · 🦇 bat</Text>
+            <Text style={s.ovHint}>✦ golden · 🚀 rocket · 🧊 ice · 💣 bomb · ⚡ speed · ▶▶ conveyor · 👹 boss (enrages!) · 🦇 bat</Text>
           </Pressable>
         )}
 
