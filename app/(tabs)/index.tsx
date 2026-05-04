@@ -1267,6 +1267,7 @@ export default function GameScreen(){
                 {leaderboard.slice(0,3).map((sc,i)=><LbRow key={i} score={sc} rank={i} dark={false}/>)}
               </View>
             )}
+            {(()=>{const n=getAchCache().size;return n>0?<Text style={[s.ovHint,{opacity:0.55,marginTop:4,marginBottom:-4}]}>🏆 {n}/{ACHIEVEMENTS.length} achievements</Text>:null;})()}
             <View style={s.btn}><Text style={s.btnTxt}>TAP TO PLAY</Text></View>
             <Text style={s.ovHint}>🚀 jetpack · 🛡️ shield · 🧲 magnet · 🥾 boots · ❤️ life · ⭐ star</Text>
             <Text style={s.ovHint}>✦ golden · 🚀 rocket · 🧊 ice · 💣 bomb · ⚡ speed · ▶▶ conveyor · 👹 boss (enrages!) · 🦇 bat</Text>

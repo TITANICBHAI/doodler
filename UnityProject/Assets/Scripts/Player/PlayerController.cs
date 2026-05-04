@@ -247,6 +247,33 @@ namespace DoodleClimb.Player
             }
         }
 
+        // ── Special platform effects ──────────────────────────────────────────────
+        /// <summary>Ice platform: amplify horizontal momentum.</summary>
+        public void ApplyIceSlip(float slipMultiplier)
+        {
+            _rb.velocity = new Vector2(_rb.velocity.x * slipMultiplier, _rb.velocity.y);
+        }
+
+        /// <summary>Conveyor platform: add a decaying horizontal push.</summary>
+        public void ApplyConveyorPush(float pushVelocity, float duration)
+        {
+            StartCoroutine(ConveyorPushCoroutine(pushVelocity, duration));
+        }
+
+        private System.Collections.IEnumerator ConveyorPushCoroutine(float targetVx, float duration)
+        {
+            float elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                float t = 1f - (elapsed / duration);  // decay from 1 → 0
+                _rb.velocity = new Vector2(
+                    _rb.velocity.x + targetVx * t * Time.deltaTime * 4f,
+                    _rb.velocity.y);
+                yield return null;
+            }
+        }
+
         public void NotifyMovingPlatformNearby()
         {
             if (!_encounteredMovingPlatform)
