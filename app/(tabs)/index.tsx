@@ -153,7 +153,7 @@ interface WeatherP {id:number;x:number;y:number;vy:number;vx:number;}
 interface Gem      {id:number;x:number;y:number;collected:boolean;popT:number;}
 interface Boss     {id:number;x:number;y:number;vx:number;vy:number;hp:number;maxHp:number;ang:number;t:number;dead:boolean;deathT:number;hitT:number;enraged:boolean;shootT:number;}
 interface Wormhole {id:number;x:number;y:number;r:number;t:number;used:boolean;}
-interface UfoProj  {id:number;x:number;y:number;vy:number;life:number;dodged:boolean;}
+interface UfoProj  {id:number;x:number;y:number;vx:number;vy:number;life:number;dodged:boolean;fromBoss:boolean;}
 
 interface GS {
   px:number;py:number;pvx:number;pvy:number;psx:number;psy:number;facing:number;eyeY:number;
@@ -474,7 +474,7 @@ function update(gs:GS,dt:number,now:number){
         if(screenY>-80&&screenY<SH+80){
           const tx=pcx-bx,ty=pcy-by,len=Math.hypot(tx,ty)||1;
           const spd=160;
-          gs.ufoProjs.push({id:gs.pid++,x:bx,y:by,vy:spd*(ty/len),life:1.4,dodged:false});
+          gs.ufoProjs.push({id:gs.pid++,x:bx,y:by,vx:spd*(tx/len),vy:spd*(ty/len),life:1.4,dodged:false,fromBoss:true});
           // store vx in life field — reuse UfoProj for rendering; patch via separate store
         }
       }
@@ -537,7 +537,7 @@ function update(gs:GS,dt:number,now:number){
           const projX=e.x+18,projY=e.y+30;
           const screenY=projY-gs.scrollY;
           if(screenY>-60&&screenY<SH+60)
-            gs.ufoProjs.push({id:gs.pid++,x:projX,y:projY,vy:190+Math.random()*60,life:1,dodged:false});
+            gs.ufoProjs.push({id:gs.pid++,x:projX,y:projY,vx:0,vy:190+Math.random()*60,life:1,dodged:false,fromBoss:false});
         }
       }
     }
@@ -547,7 +547,7 @@ function update(gs:GS,dt:number,now:number){
   const pcx=gs.px+PW/2,pcy=gs.py+PH/2;
   for(const pr of gs.ufoProjs){
     if(pr.life<=0) continue;
-    pr.y+=pr.vy*dt;pr.life-=dt*0.6;
+    pr.x+=pr.vx*dt;pr.y+=pr.vy*dt;pr.life-=dt*0.6;
     if(gs.invincT<=0){
       const dx=pcx-pr.x,dy=pcy-pr.y;
       if(Math.hypot(dx,dy)<20){
@@ -1202,7 +1202,12 @@ export default function GameScreen(){
           {r.wormholes.map(w=><WormholeView key={w.id} wh={w} now={now}/>)}
           {r.bosses.map(b=><BossView key={b.id} boss={b}/>)}
           {r.enemies.map(e=><EnemyView key={e.id} e={e} now={now}/>)}
-          {r.ufoProjs.map(pr=><View key={pr.id} style={{position:"absolute",left:pr.x-6,top:pr.y-gs.scrollY-6,width:12,height:12,borderRadius:6,backgroundColor:"#00FF88",opacity:Math.min(1,pr.life),boxShadow:"0px 0px 6px rgba(0,255,136,0.8)"} as any}/>)}
+          {r.ufoProjs.map(pr=>{
+            const col=pr.fromBoss?"#FF8800":"#00FF88";
+            const glw=pr.fromBoss?"rgba(255,136,0,0.9)":"rgba(0,255,136,0.8)";
+            const sz=pr.fromBoss?14:12;
+            return<View key={pr.id} style={{position:"absolute",left:pr.x-sz/2,top:pr.y-gs.scrollY-sz/2,width:sz,height:sz,borderRadius:sz/2,backgroundColor:col,opacity:Math.min(1,pr.life),boxShadow:`0px 0px ${pr.fromBoss?8:6}px ${glw}`} as any}/>;
+          })}
 
           {/* Trail — flame colors when boosting */}
           {r.trail.map((t,i)=>{
