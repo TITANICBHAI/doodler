@@ -112,9 +112,9 @@ function zoneColors(score:number){
 }
 
 // ─── Platform & power-up types ────────────────────────────────────────────────
-type PType="static"|"moving"|"spring"|"breakable"|"crumble"|"golden"|"rocket"|"ice"|"bomb";
-const PCOL:Record<PType,string>={static:"#2DC968",moving:"#4EAAF5",spring:"#F5D123",breakable:"#F05232",crumble:"#FF6C20",golden:"#FFD700",rocket:"#FF4420",ice:"#A8EEFF",bomb:"#FF3300"};
-const PBORD:Record<PType,string>={static:"#1AA850",moving:"#2D88D8",spring:"#D4A800",breakable:"#C83018",crumble:"#CC4A10",golden:"#BF9B00",rocket:"#CC2010",ice:"#60C8E8",bomb:"#AA1100"};
+type PType="static"|"moving"|"spring"|"breakable"|"crumble"|"golden"|"rocket"|"ice"|"bomb"|"conveyor";
+const PCOL:Record<PType,string>={static:"#2DC968",moving:"#4EAAF5",spring:"#F5D123",breakable:"#F05232",crumble:"#FF6C20",golden:"#FFD700",rocket:"#FF4420",ice:"#A8EEFF",bomb:"#FF3300",conveyor:"#FF8040"};
+const PBORD:Record<PType,string>={static:"#1AA850",moving:"#2D88D8",spring:"#D4A800",breakable:"#C83018",crumble:"#CC4A10",golden:"#BF9B00",rocket:"#CC2010",ice:"#60C8E8",bomb:"#AA1100",conveyor:"#CC4A10"};
 const P_GREEN="#27C063"; const P_DARK="#1E9E50";
 
 type PUType="jetpack"|"shield"|"magnet"|"boots"|"heart"|"star"|"speed";
@@ -166,6 +166,7 @@ interface GS {
   warpStars:WarpStar[];textPops:TextPop[];weatherParts:WeatherP[];gems:Gem[];bosses:Boss[];wormholes:Wormhole[];
   gemsCollected:number;nearMissCooldown:number;nearMissCount:number;bossKills:number;
   iceHits:number;wormholeUsed:boolean;bombRidden:boolean;achNewRun:string[];achPopT:number;achPopText:string;
+  savedBest:number;newBestFlashed:boolean;
   phase:Phase;input:number;
   shakeX:number;shakeY:number;shakeT:number;
   pid:number;
@@ -176,9 +177,9 @@ function pickType(score:number):PType{
   const r=Math.random();
   if(score<80) return r<0.06?"moving":"static";
   if(score<200) return r<0.09?"spring":r<0.24?"moving":r<0.37?"breakable":"static";
-  if(score<400) return r<0.10?"spring":r<0.25?"moving":r<0.40?"breakable":r<0.50?"crumble":r<0.55?"golden":r<0.59?"ice":r<0.62?"bomb":"static";
-  if(score<700) return r<0.11?"spring":r<0.26?"moving":r<0.43?"breakable":r<0.55?"crumble":r<0.60?"golden":r<0.63?"rocket":r<0.67?"ice":r<0.69?"bomb":"static";
-  return       r<0.12?"spring":r<0.26?"moving":r<0.44?"breakable":r<0.57?"crumble":r<0.61?"golden":r<0.65?"rocket":r<0.69?"ice":r<0.71?"bomb":"static";
+  if(score<400) return r<0.10?"spring":r<0.25?"moving":r<0.40?"breakable":r<0.50?"crumble":r<0.55?"golden":r<0.59?"ice":r<0.62?"bomb":r<0.65?"conveyor":"static";
+  if(score<700) return r<0.11?"spring":r<0.26?"moving":r<0.43?"breakable":r<0.55?"crumble":r<0.60?"golden":r<0.63?"rocket":r<0.67?"ice":r<0.69?"bomb":r<0.72?"conveyor":"static";
+  return       r<0.12?"spring":r<0.26?"moving":r<0.44?"breakable":r<0.57?"crumble":r<0.61?"golden":r<0.65?"rocket":r<0.69?"ice":r<0.71?"bomb":r<0.74?"conveyor":"static";
 }
 function mkPlat(gs:GS,y:number,sc:number):Plat{
   // Width narrows with altitude for difficulty; gap is capped for fairness
@@ -253,6 +254,7 @@ function mkGS(best:number):GS{
     warpStars:[],textPops:[],weatherParts:[],gems:[],bosses:[],wormholes:[],
     gemsCollected:0,nearMissCooldown:0,nearMissCount:0,bossKills:0,
     iceHits:0,wormholeUsed:false,bombRidden:false,achNewRun:[],achPopT:0,achPopText:"",
+    savedBest:best,newBestFlashed:false,
     phase:"menu",input:0,shakeX:0,shakeY:0,shakeT:0,pid:0,
   };
   gs.plats.push(mkStat(gs,startY+PH,SW/2-52,104));
@@ -333,6 +335,7 @@ function update(gs:GS,dt:number,now:number){
         // Jump velocity based on platform type
         const isRocket=p.type==="rocket",isSpring=p.type==="spring",isIce=p.type==="ice",bootBoost=gs.bootsT>0&&!isSpring&&!isRocket;
         if(isIce){gs.pvx=gs.pvx*(1.55+Math.random()*0.35)+(Math.random()-0.5)*30;gs.iceHits++;} // slippery slide
+        if(p.type==="conveyor"){gs.pvx=p.dir*320;pop(gs,p.x+p.w/2,p.y-20,p.dir>0?"▶▶ PUSH!":"◀◀ PUSH!","#FF8040");}
         gs.pvy=isRocket?ROCKET_VEL:isSpring?SPRING_VEL:bootBoost?Math.round(SPRING_VEL*0.82):JUMP_VEL;
         gs.psx=isRocket?0.70:isSpring?1.58:bootBoost?1.52:1.40;
         gs.psy=isRocket?1.45:isSpring?0.50:bootBoost?0.55:0.63;
@@ -555,6 +558,11 @@ function update(gs:GS,dt:number,now:number){
   if(gs.py<gs.minY) gs.minY=gs.py;
   gs.score=Math.max(gs.score,Math.floor((gs.startY-gs.minY)/5));
   if(gs.score>gs.best){gs.best=gs.score;saveBest(gs.best);}
+  if(!gs.newBestFlashed&&gs.savedBest>0&&gs.score>gs.savedBest){
+    gs.newBestFlashed=true;
+    pop(gs,SW/2-50,gs.scrollY+SH*0.42,"✦ NEW BEST! ✦","#FFD700");
+    emit(gs,SW/2,gs.scrollY+SH*0.42,"#FFD700",28);gs.shakeT=0.25;
+  }
   for(const m of MILESTONES){if(gs.score>=m&&m>gs.lastMilestone){gs.lastMilestone=m;gs.milestoneText=`${m} m`;gs.milestoneT=2.2;const fc=["#FF4444","#FFD700","#00FF88","#FF88FF","#00CCFF","#FF8844","#AAFFAA","#FF44FF"][MILESTONES.indexOf(m)%8];for(let fx=0;fx<5;fx++)emit(gs,SW*0.1+fx*(SW*0.2),gs.py-SH*0.08,fc,18);}}
 
   // Achievement checks
@@ -826,6 +834,7 @@ function PlatView({p}:{p:Plat}){
         {p.type==="rocket"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:14}]}>🚀</Text></View>}
         {p.type==="ice"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:9,letterSpacing:3,color:"rgba(20,80,140,0.65)"}]}>❄  ❄  ❄</Text></View>}
         {p.type==="bomb"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:16}]}>💣</Text></View>}
+        {p.type==="conveyor"&&!br&&<View style={g.movArrows}><Text style={[g.arrowTxt,{fontSize:12,letterSpacing:2,color:"rgba(255,255,255,0.9)"}]}>{p.dir>0?"▶▶▶":"◀◀◀"}</Text></View>}
       </View>
     </>
   );
