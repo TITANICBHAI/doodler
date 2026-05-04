@@ -54,6 +54,13 @@ namespace DoodleClimb.Player
         private int   _combo;
         private int[] _comboThresholds = { 3, 5, 8, 10, 15 };
 
+        // ── Internal — power-ups ──────────────────────────────────────────────────
+        private float _magnetTimer;
+        private float _shieldTimer;
+        private float _starTimer;
+        private bool  _shielded;
+        private int   _lives = 3;
+
         // ── Internal — recording ──────────────────────────────────────────────────
         private float  _lastLandTime;
         private string _lastPlatformType = "none";
@@ -102,6 +109,7 @@ namespace DoodleClimb.Player
             ApplyFallGravity();
             WrapScreen();
             UpdateSquash();
+            UpdatePowerUpTimers();
             RecordFrame();
         }
 
@@ -301,6 +309,46 @@ namespace DoodleClimb.Player
                 _rb.velocity.y);
         }
 
+        // ── Power-ups ─────────────────────────────────────────────────────────────
+        public void ActivateMagnet(float duration)  { _magnetTimer = duration; }
+        public void ActivateShield(float duration)  { _shielded = true; _shieldTimer = duration; }
+        public void ActivateStar(float duration)    { _starTimer = duration; }
+
+        public void TakeContactDamage()
+        {
+            if (_starTimer > 0f || !_isAlive) return;
+
+            if (_shielded)
+            {
+                _shielded    = false;
+                _shieldTimer = 0f;
+                VisualEffects.Instance?.PlayLandDust(transform.position, Color.cyan);
+                return;
+            }
+
+            if (_lives > 1)
+            {
+                _lives--;
+                _rb.velocity = new Vector2(_rb.velocity.x, 16f);  // knock up
+                VisualEffects.Instance?.PlayLandDust(transform.position, Color.white);
+            }
+            else
+            {
+                Die();
+            }
+        }
+
+        private void UpdatePowerUpTimers()
+        {
+            if (_magnetTimer > 0f) _magnetTimer -= Time.deltaTime;
+            if (_starTimer   > 0f) _starTimer   -= Time.deltaTime;
+            if (_shieldTimer > 0f)
+            {
+                _shieldTimer -= Time.deltaTime;
+                if (_shieldTimer <= 0f) _shielded = false;
+            }
+        }
+
         // ── Public getters ────────────────────────────────────────────────────────
         public float       HorizontalInput => _horizontalInput;
         public bool        IsAlive         => _isAlive;
@@ -308,6 +356,10 @@ namespace DoodleClimb.Player
         public Rigidbody2D Rigidbody       => _rb;
         public float       CurrentHeight   => transform.position.y;
         public int         Combo           => _combo;
+        public int         Lives           => _lives;
+        public bool        MagnetActive    => _magnetTimer > 0f;
+        public bool        StarActive      => _starTimer   > 0f;
+        public bool        Shielded        => _shielded;
         public Color CharacterColor =>
             _visualSR != null ? _visualSR.color : new Color(0.18f, 0.80f, 0.44f);
     }

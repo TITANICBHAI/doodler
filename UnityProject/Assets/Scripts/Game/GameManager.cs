@@ -46,6 +46,12 @@ namespace DoodleClimb.Game
         private float _aiMaxY;
         private bool  _gameRunning;
 
+        // ── Stat tracking ─────────────────────────────────────────────────────────
+        private int _coinsCollected;
+        private int _gemsCollected;
+        private int _bossKills;
+        private int _enemiesDefeated;
+
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
         {
@@ -97,10 +103,14 @@ namespace DoodleClimb.Game
         {
             _modeManager?.SetMode(mode);
 
-            _playerScore = 0f;
-            _aiScore     = 0f;
-            _playerMaxY  = 0f;
-            _aiMaxY      = 0f;
+            _playerScore    = 0f;
+            _aiScore        = 0f;
+            _playerMaxY     = 0f;
+            _aiMaxY         = 0f;
+            _coinsCollected = 0;
+            _gemsCollected  = 0;
+            _bossKills      = 0;
+            _enemiesDefeated = 0;
 
             int levelSeed = System.Environment.TickCount;
 
@@ -258,13 +268,22 @@ namespace DoodleClimb.Game
             float challengeTarget = _trainer != null
                 ? _trainer.GetProfile().challengeTargetScore : 0f;
 
+            // Save daily best
+            bool newDailyBest = DailyBestTracker.TrySaveDailyBest((int)_playerScore);
+            int  dailyBest    = DailyBestTracker.GetDailyBest();
+
             uiManager?.ShowGameOver(
                 playerScore:    _playerScore,
                 aiScore:        vsAI ? _aiScore : -1f,
                 winner:         winner,
                 aiHasTrained:   _trainer != null && _trainer.IsProfileReady,
                 challengeTarget: challengeTarget,
-                isWatchAI:      false);
+                isWatchAI:      false,
+                coinsCollected: _coinsCollected,
+                gemsCollected:  _gemsCollected,
+                bossKills:      _bossKills,
+                dailyBest:      dailyBest,
+                newDailyBest:   newDailyBest);
 
             Debug.Log($"[GameManager] Player died. Score:{_playerScore:0} " +
                       $"AI:{_aiScore:0} Winner:{winner}");
@@ -309,9 +328,18 @@ namespace DoodleClimb.Game
             _recorder?.RecordLanding(playerX, platformCentreX);
         }
 
+        // ── Stat notification callbacks ───────────────────────────────────────────
+        public void NotifyCoinCollected()     { _coinsCollected++; }
+        public void NotifyGemCollected(int pts){ _gemsCollected++; _playerScore += pts; }
+        public void NotifyBossKilled(int pts) { _bossKills++; _enemiesDefeated++; _playerScore += pts; }
+        public void NotifyEnemyDefeated()     { _enemiesDefeated++; }
+
         // ── Public getters ────────────────────────────────────────────────────────
-        public float PlayerScore => _playerScore;
-        public float AIScore     => _aiScore;
-        public bool  IsRunning   => _gameRunning;
+        public float PlayerScore    => _playerScore;
+        public float AIScore        => _aiScore;
+        public bool  IsRunning      => _gameRunning;
+        public int   CoinsCollected => _coinsCollected;
+        public int   GemsCollected  => _gemsCollected;
+        public int   BossKills      => _bossKills;
     }
 }
