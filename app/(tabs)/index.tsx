@@ -61,6 +61,8 @@ const ACHIEVEMENTS:Achievement[]=[
   {id:"lucky_duck", icon:"😅", title:"Lucky Duck",     desc:"5 near misses in one run"},
   {id:"speed_racer",icon:"⚡", title:"Speed Racer",    desc:"Grab the speed boost"},
   {id:"air_king",   icon:"✈",  title:"Air King",       desc:"Air chain ×5 stomps in one chain"},
+  {id:"conveyor",   icon:"▶",  title:"Conveyor Rider", desc:"Land on a conveyor platform"},
+  {id:"no_damage",  icon:"🛡",  title:"Flawless",       desc:"Reach 300m without losing a life"},
 ];
 function getAllTimeAch():string[]{try{return JSON.parse((globalThis as any).localStorage?.getItem?.("dc_ach")||"[]")||[];}catch{return[];}}
 function saveAch(ids:string[]):void{try{(globalThis as any).localStorage?.setItem?.("dc_ach",JSON.stringify(ids));}catch{}}
@@ -338,7 +340,7 @@ function update(gs:GS,dt:number,now:number){
         // Jump velocity based on platform type
         const isRocket=p.type==="rocket",isSpring=p.type==="spring",isIce=p.type==="ice",bootBoost=gs.bootsT>0&&!isSpring&&!isRocket;
         if(isIce){gs.pvx=gs.pvx*(1.55+Math.random()*0.35)+(Math.random()-0.5)*30;gs.iceHits++;} // slippery slide
-        if(p.type==="conveyor"){gs.conveyorDirT=0.55;gs.conveyorDir=p.dir;emit(gs,p.x+p.w/2,p.y,"#FF8040",8);}
+        if(p.type==="conveyor"){gs.conveyorDirT=0.55;gs.conveyorDir=p.dir;emit(gs,p.x+p.w/2,p.y,"#FF8040",8);if(unlockAch("conveyor",gs.achNewRun)){const a=ACHIEVEMENTS.find(x=>x.id==="conveyor");if(a){gs.achPopText=`${a.icon} ${a.title}`;gs.achPopT=3.0;}}}
         gs.pvy=isRocket?ROCKET_VEL:isSpring?SPRING_VEL:bootBoost?Math.round(SPRING_VEL*0.82):JUMP_VEL;
         gs.psx=isRocket?0.70:isSpring?1.58:bootBoost?1.52:1.40;
         gs.psy=isRocket?1.45:isSpring?0.50:bootBoost?0.55:0.63;
@@ -450,9 +452,9 @@ function update(gs:GS,dt:number,now:number){
     }
     if(!boss.dead&&gs.invincT<=0&&gs.starT<=0){
       if(Math.hypot(gs.px+PW/2-(boss.x+40),gs.py+PH/2-(boss.y+40))<44&&!(gs.pvy>0&&gs.py+PH<boss.y+28)){
-        if(gs.shielded){gs.shielded=false;gs.invincT=2.0;gs.airStomps=0;emit(gs,boss.x+40,boss.y+40,"#50A0FF",14);}
-        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.5;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;gs.airStomps=0;}
-        else{gs.phase="dead";gs.shakeT=0.7;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
+        if(gs.shielded){gs.shielded=false;gs.invincT=2.0;gs.airStomps=0;gs.conveyorDirT=0;emit(gs,boss.x+40,boss.y+40,"#50A0FF",14);}
+        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.5;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;gs.airStomps=0;gs.conveyorDirT=0;}
+        else{gs.phase="dead";gs.shakeT=0.7;gs.conveyorDirT=0;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
       }
     }
   }
@@ -532,9 +534,9 @@ function update(gs:GS,dt:number,now:number){
       }
       if(feet>e.y+EH*0.35&&gs.py<e.y+EH-5){
         e.dead=true;emit(gs,e.x+EW/2,e.y,"#FF5533",14);
-        if(gs.shielded){gs.shielded=false;gs.invincT=1.5;gs.airStomps=0;gs.enemiesDefeated++;}
-        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.2;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;gs.airStomps=0;}
-        else{gs.phase="dead";gs.shakeT=0.7;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
+        if(gs.shielded){gs.shielded=false;gs.invincT=1.5;gs.airStomps=0;gs.conveyorDirT=0;gs.enemiesDefeated++;}
+        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.2;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;gs.airStomps=0;gs.conveyorDirT=0;}
+        else{gs.phase="dead";gs.shakeT=0.7;gs.conveyorDirT=0;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
         break;
       }
     }
@@ -586,6 +588,7 @@ function update(gs:GS,dt:number,now:number){
     if(gs.coinsCollected>=20)tryUnlock("coin_20");
     if(gs.enemiesDefeated>=10)tryUnlock("stomp_10");
     if(gs.nearMissCount>=5)  tryUnlock("lucky_duck");
+    if(gs.score>=300&&gs.lives===3) tryUnlock("no_damage");
   })();
   if(gs.achPopT>0) gs.achPopT-=dt;
 
@@ -711,9 +714,9 @@ function update(gs:GS,dt:number,now:number){
 
   // Death
   if(gs.py>gs.scrollY+SH+DEATH_OFF&&gs.invincT<=0){
-    if(gs.shielded){gs.shielded=false;gs.pvy=SPRING_VEL*1.1;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.2;gs.shakeT=0.3;gs.airStomps=0;emit(gs,gs.px+PW/2,gs.py,"#50A0FF",20);}
-    else if(gs.lives>1){gs.lives--;gs.pvy=SPRING_VEL;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.5;gs.shakeT=0.45;gs.canDJump=true;gs.combo=0;gs.comboT=0;gs.airStomps=0;emit(gs,gs.px+PW/2,gs.py,"#FF4422",16);}
-    else{gs.phase="dead";gs.shakeT=0.65;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
+    if(gs.shielded){gs.shielded=false;gs.pvy=SPRING_VEL*1.1;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.2;gs.shakeT=0.3;gs.airStomps=0;gs.conveyorDirT=0;emit(gs,gs.px+PW/2,gs.py,"#50A0FF",20);}
+    else if(gs.lives>1){gs.lives--;gs.pvy=SPRING_VEL;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.5;gs.shakeT=0.45;gs.canDJump=true;gs.combo=0;gs.comboT=0;gs.airStomps=0;gs.conveyorDirT=0;emit(gs,gs.px+PW/2,gs.py,"#FF4422",16);}
+    else{gs.phase="dead";gs.shakeT=0.65;gs.conveyorDirT=0;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
   }
 }
 
@@ -1251,7 +1254,7 @@ export default function GameScreen(){
         {phase==="play"&&r.score===0&&(
           <View style={s.hintWrap}>
             <Text style={[s.hintTxt,{color:zc.txt}]}>← left  ·  right →  ·  tap mid-air = double jump</Text>
-            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>💣 bomb · 🦇 bat · ⚡ speed · air chain stomps · 👹 boss (enrages at 1HP!)</Text>
+            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>💣 bomb · ▶▶ conveyor · 🦇 bat · ⚡ speed · air chain stomps · 👹 boss (enrages at 1HP!)</Text>
           </View>
         )}
 
