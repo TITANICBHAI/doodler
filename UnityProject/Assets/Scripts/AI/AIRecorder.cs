@@ -49,6 +49,9 @@ namespace DoodleClimb.AI
         public JumpOutcome outcome;
         public float       distanceToPlatform; // distance to next platform at jump time
         public float       landingError;       // |playerX - platform.x| on landing
+
+        // Near-miss flag — set true when player avoids a hazard by a narrow margin
+        public bool nearMissFlag;
     }
 
     /// <summary>A single timestamped position frame captured for ghost replay.</summary>

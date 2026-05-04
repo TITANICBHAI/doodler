@@ -153,7 +153,7 @@ interface WeatherP {id:number;x:number;y:number;vy:number;vx:number;}
 interface Gem      {id:number;x:number;y:number;collected:boolean;popT:number;}
 interface Boss     {id:number;x:number;y:number;vx:number;vy:number;hp:number;maxHp:number;ang:number;t:number;dead:boolean;deathT:number;hitT:number;enraged:boolean;}
 interface Wormhole {id:number;x:number;y:number;r:number;t:number;used:boolean;}
-interface UfoProj  {id:number;x:number;y:number;vy:number;life:number;}
+interface UfoProj  {id:number;x:number;y:number;vy:number;life:number;dodged:boolean;}
 
 interface GS {
   px:number;py:number;pvx:number;pvy:number;psx:number;psy:number;facing:number;eyeY:number;
@@ -521,7 +521,7 @@ function update(gs:GS,dt:number,now:number){
           const projX=e.x+18,projY=e.y+30;
           const screenY=projY-gs.scrollY;
           if(screenY>-60&&screenY<SH+60)
-            gs.ufoProjs.push({id:gs.pid++,x:projX,y:projY,vy:190+Math.random()*60,life:1});
+            gs.ufoProjs.push({id:gs.pid++,x:projX,y:projY,vy:190+Math.random()*60,life:1,dodged:false});
         }
       }
     }
@@ -542,9 +542,10 @@ function update(gs:GS,dt:number,now:number){
           gs.conveyorDirT=0;
           if(gs.lives<=0){gs.phase="dead";return;}
         } else {gs.shielded=false;emit(gs,gs.px+PW/2,gs.py,"#00A0FF",14);}
-      } else if(Math.hypot(dx,dy)<50&&pr.y>gs.py+PH){
-        // near-miss dodge
-        gs.ufoProjDodged++;
+      } else if(!pr.dodged&&Math.hypot(dx,dy)<52&&pr.y>gs.py+PH){
+        // near-miss dodge (only count once per projectile)
+        pr.dodged=true;gs.ufoProjDodged++;
+        pop(gs,gs.px+PW/2,gs.py-10,"DODGE!","#00FF88");
       }
     }
   }
@@ -1318,7 +1319,7 @@ export default function GameScreen(){
             {(()=>{const n=getAchCache().size;return n>0?<Text style={[s.ovHint,{opacity:0.55,marginTop:4,marginBottom:-4}]}>🏆 {n}/{ACHIEVEMENTS.length} achievements</Text>:null;})()}
             <View style={s.btn}><Text style={s.btnTxt}>TAP TO PLAY</Text></View>
             <Text style={s.ovHint}>🚀 jetpack · 🛡️ shield · 🧲 magnet · 🥾 boots · ❤️ life · ⭐ star</Text>
-            <Text style={s.ovHint}>✦ golden · 🚀 rocket · 🧊 ice · 💣 bomb · ⚡ speed · ▶▶ conveyor · 👹 boss (enrages!) · 🦇 bat</Text>
+            <Text style={s.ovHint}>✦ golden · 🚀 rocket · 🧊 ice · 💣 bomb · ⚡ speed · ▶▶ conveyor · 👹 boss (enrages!) · 🦇 bat · 🛸 UFO fires!</Text>
           </Pressable>
         )}
 
@@ -1339,6 +1340,7 @@ export default function GameScreen(){
             <View style={[s.statsRow,{marginTop:6}]}>
               {r.bossKills>0&&<StatPill icon="👹" val={r.bossKills} label="BOSSES"/>}
               {r.batsKilled>0&&<StatPill icon="🦇" val={r.batsKilled} label="BATS"/>}
+              {r.ufoProjDodged>0&&<StatPill icon="🛸" val={r.ufoProjDodged} label="DODGED"/>}
               {r.nearMissCount>0&&<StatPill icon="😅" val={r.nearMissCount} label="CLOSE!"/>}
               {r.wormholeUsed&&<StatPill icon="🌀" val={1} label="WORMHOLE"/>}
               {r.bombRidden&&<StatPill icon="💣" val={1} label="BOMB"/>}
