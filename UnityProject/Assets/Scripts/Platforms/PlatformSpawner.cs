@@ -284,10 +284,14 @@ namespace DoodleClimb.Platforms
             float bombChance      = Mathf.Clamp01(bombBase);
             float goldenChance    = Mathf.Clamp01(goldenBase);
             float rocketChance    = Mathf.Clamp01(rocketBase);
+            // Crumble: same curve as breakable but slightly rarer; appears above 400 m
+            float crumbleBase   = height > 400f ? Mathf.Lerp(0f, 0.06f, Mathf.InverseLerp(400f, 900f, height)) : 0f;
+            float crumbleChance = Mathf.Clamp01(crumbleBase);
 
             // Cap total special chance at 72% so there's always a floor of statics
             float total = movingChance + breakableChance + temporaryChance + springChance
-                        + iceChance + conveyorChance + bombChance + goldenChance + rocketChance;
+                        + iceChance + conveyorChance + bombChance + goldenChance + rocketChance
+                        + crumbleChance;
             if (total > 0.72f)
             {
                 float scale   = 0.72f / total;
@@ -300,6 +304,7 @@ namespace DoodleClimb.Platforms
                 bombChance      *= scale;
                 goldenChance    *= scale;
                 rocketChance    *= scale;
+                crumbleChance   *= scale;
             }
 
             if (roll < springChance)    return Platform.PlatformType.Spring;
@@ -319,6 +324,8 @@ namespace DoodleClimb.Platforms
             if (roll < rocketChance)    return Platform.PlatformType.Rocket;
             roll -= rocketChance;
             if (roll < bombChance)      return Platform.PlatformType.Bomb;
+            roll -= bombChance;
+            if (roll < crumbleChance)   return Platform.PlatformType.Crumble;
             return Platform.PlatformType.Static;
         }
 

@@ -38,6 +38,11 @@ namespace DoodleClimb.AI
         [Range(0f, 1f)]
         public float distancePrecision  = 0.5f;
 
+        [Header("Hazard Avoidance")]
+        /// <summary>Fraction of runs where the player had at least one near-miss (0-1).</summary>
+        [Range(0f, 1f)]
+        public float nearMissRate = 0f;
+
         [Header("Evolution")]
         public int   totalRunsAnalyzed  = 0;
         public float bestScoreEver      = 0f;
@@ -155,6 +160,7 @@ namespace DoodleClimb.AI
             double sumJumpDelay        = 0;
             double sumDirectionX       = 0;
             int    riskCount           = 0;
+            int    nearMissCount       = 0;
             double sumLandingError     = 0;
             int    landingCount        = 0;
             double sumDistancePrecision = 0;
@@ -172,6 +178,8 @@ namespace DoodleClimb.AI
 
                 if (a.platformType == "Breakable" || a.platformType == "Temporary")
                     riskCount++;
+
+                if (a.nearMissFlag) nearMissCount++;
 
                 if (a.velocityX != 0f && prevVX != 0f &&
                     Mathf.Sign(a.velocityX) != Mathf.Sign(prevVX))
@@ -203,7 +211,8 @@ namespace DoodleClimb.AI
                 ? _recorder.LatestReactionTime
                 : profile.reactionTime;
 
-            result.riskLevel = Mathf.Clamp01((float)riskCount / n);
+            result.riskLevel     = Mathf.Clamp01((float)riskCount / n);
+            result.nearMissRate  = Mathf.Clamp01((float)nearMissCount / n);
 
             // Jump precision: tight std-dev → high precision
             float meanDelay = result.avgJumpDelay;
@@ -246,6 +255,7 @@ namespace DoodleClimb.AI
             profile.movementSmoothness = Lerp(profile.movementSmoothness, newData.movementSmoothness, lr);
             profile.landingAccuracy    = Lerp(profile.landingAccuracy,    newData.landingAccuracy,    lr);
             profile.distancePrecision  = Lerp(profile.distancePrecision,  newData.distancePrecision,  lr);
+            profile.nearMissRate       = Lerp(profile.nearMissRate,       newData.nearMissRate,       lr);
 
             profile.totalRunsAnalyzed++;
 

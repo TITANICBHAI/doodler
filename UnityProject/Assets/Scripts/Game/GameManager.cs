@@ -341,7 +341,11 @@ namespace DoodleClimb.Game
         public void NotifyEnemyDefeated()     { _enemiesDefeated++; }
         public void NotifyBatKilled()         { _batsKilled++; _enemiesDefeated++; }
         public void NotifyWormholeUsed()      { _wormholesUsed++; }
-        public void NotifyNearMiss()          { _nearMisses++; }
+        public void NotifyNearMiss()
+        {
+            _nearMisses++;
+            _recorder?.RecordNearMiss();
+        }
 
         // ── Public getters ────────────────────────────────────────────────────────
         public float PlayerScore    => _playerScore;
