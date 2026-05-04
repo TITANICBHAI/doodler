@@ -151,7 +151,7 @@ interface WarpStar {id:number;x:number;y:number;vy:number;r:number;}
 interface TextPop  {id:number;x:number;y:number;vy:number;life:number;text:string;color:string;}
 interface WeatherP {id:number;x:number;y:number;vy:number;vx:number;}
 interface Gem      {id:number;x:number;y:number;collected:boolean;popT:number;}
-interface Boss     {id:number;x:number;y:number;vx:number;vy:number;hp:number;maxHp:number;ang:number;t:number;dead:boolean;deathT:number;hitT:number;enraged:boolean;}
+interface Boss     {id:number;x:number;y:number;vx:number;vy:number;hp:number;maxHp:number;ang:number;t:number;dead:boolean;deathT:number;hitT:number;enraged:boolean;shootT:number;}
 interface Wormhole {id:number;x:number;y:number;r:number;t:number;used:boolean;}
 interface UfoProj  {id:number;x:number;y:number;vy:number;life:number;dodged:boolean;}
 
@@ -223,7 +223,7 @@ function mkEnemy(gs:GS,y:number,score:number):Enemy{
 }
 
 function mkBoss(gs:GS,y:number):Boss{
-  return{id:gs.pid++,x:20+Math.random()*(SW-110),y,vx:(Math.random()<0.5?1:-1)*88,vy:0,hp:3,maxHp:3,ang:0,t:0,dead:false,deathT:0,hitT:0,enraged:false};
+  return{id:gs.pid++,x:20+Math.random()*(SW-110),y,vx:(Math.random()<0.5?1:-1)*88,vy:0,hp:3,maxHp:3,ang:0,t:0,dead:false,deathT:0,hitT:0,enraged:false,shootT:0};
 }
 function mkWormhole(gs:GS,y:number):Wormhole{
   return{id:gs.pid++,x:44+Math.random()*(SW-88),y,r:32,t:0,used:false};
@@ -461,6 +461,22 @@ function update(gs:GS,dt:number,now:number){
         if(gs.shielded){gs.shielded=false;gs.invincT=2.0;gs.airStomps=0;gs.conveyorDirT=0;emit(gs,boss.x+40,boss.y+40,"#50A0FF",14);}
         else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.5;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;gs.airStomps=0;gs.conveyorDirT=0;}
         else{gs.phase="dead";gs.shakeT=0.7;gs.conveyorDirT=0;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
+      }
+    }
+    // Boss fires a slow homing projectile (uses ufoProjs pool, orange color)
+    if(!boss.dead){
+      boss.shootT+=dt;
+      const shootInt=boss.enraged?2.8:5.5;
+      if(boss.shootT>=shootInt){
+        boss.shootT=0;
+        const bx=boss.x+40,by=boss.y+40;
+        const screenY=by-gs.scrollY;
+        if(screenY>-80&&screenY<SH+80){
+          const tx=pcx-bx,ty=pcy-by,len=Math.hypot(tx,ty)||1;
+          const spd=160;
+          gs.ufoProjs.push({id:gs.pid++,x:bx,y:by,vy:spd*(ty/len),life:1.4,dodged:false});
+          // store vx in life field — reuse UfoProj for rendering; patch via separate store
+        }
       }
     }
   }

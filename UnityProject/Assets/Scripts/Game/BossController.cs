@@ -32,10 +32,17 @@ namespace DoodleClimb.Game
         public int        coinDropCount = 5;
         public int        baseScoreReward = 280;
 
+        [Header("Projectile")]
+        [Tooltip("Optional prefab for boss projectiles. If null, no shots are fired.")]
+        public GameObject projectilePrefab;
+        [Tooltip("Seconds between shots (halved when enraged).")]
+        public float      shootInterval  = 4.5f;
+
         // ── Runtime ────────────────────────────────────────────────────────────────
         private int     _hp;
         private float   _diveTimer;
         private float   _hitTimer;
+        private float   _shootTimer;
         private bool    _isDiving;
         private bool    _isDead;
         private bool    _isEnraged;
@@ -54,12 +61,13 @@ namespace DoodleClimb.Game
 
         private void OnEnable()
         {
-            _hp        = maxHp;
-            _diveTimer = 0f;
-            _hitTimer  = 0f;
-            _isDiving  = false;
-            _isDead    = false;
-            _isEnraged = false;
+            _hp          = maxHp;
+            _diveTimer   = 0f;
+            _hitTimer    = 0f;
+            _shootTimer  = shootInterval * 0.5f; // first shot sooner
+            _isDiving    = false;
+            _isDead      = false;
+            _isEnraged   = false;
 
             // Start moving in a random direction
             float sign = Random.value < 0.5f ? 1f : -1f;
@@ -89,7 +97,34 @@ namespace DoodleClimb.Game
             // Flash red when hit
             var sr = GetComponentInChildren<SpriteRenderer>();
             if (sr != null)
-                sr.color = _hitTimer > 0f ? new Color(1f, 0.4f, 0.1f) : Color.red;
+                sr.color = _hitTimer > 0f ? new Color(1f, 0.4f, 0.1f)
+                         : _isEnraged      ? new Color(0.65f, 0.06f, 0.01f)
+                         : Color.red;
+
+            // Boss projectile — fires while NOT diving (to give player a break)
+            if (projectilePrefab != null && !_isDiving)
+            {
+                float interval = _isEnraged ? shootInterval * 0.5f : shootInterval;
+                _shootTimer += Time.deltaTime;
+                if (_shootTimer >= interval)
+                {
+                    _shootTimer = 0f;
+                    GameObject proj = Instantiate(
+                        projectilePrefab,
+                        transform.position + Vector3.down * 0.5f,
+                        Quaternion.identity);
+                    // Give the projectile a downward velocity toward where the player is
+                    var projRb = proj.GetComponent<Rigidbody2D>();
+                    if (projRb != null)
+                    {
+                        var player = FindObjectOfType<Player.PlayerController>();
+                        Vector2 dir = player != null
+                            ? ((Vector2)(player.transform.position - transform.position)).normalized
+                            : Vector2.down;
+                        projRb.velocity = dir * 7f;
+                    }
+                }
+            }
         }
 
         // ── Collision ─────────────────────────────────────────────────────────────
