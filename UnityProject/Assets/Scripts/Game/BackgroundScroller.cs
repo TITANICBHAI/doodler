@@ -30,6 +30,17 @@ namespace DoodleClimb.Game
         public float dotSpread   = 8f;   // half-width from centre
         public float dotBandH    = 40f;  // total vertical band (dots wrap in this)
 
+        // ── Zone sky colours ──────────────────────────────────────────────────────
+        // Each entry: (heightThreshold, skyColor). Blends linearly between zones.
+        private static readonly (float h, Color col)[] SkyZones =
+        {
+            (   0f, new Color(0.97f, 0.96f, 0.91f, 1f)),  // Ground   — warm cream
+            ( 200f, new Color(0.85f, 0.92f, 0.97f, 1f)),  // Mid      — soft sky blue
+            ( 500f, new Color(0.50f, 0.72f, 0.95f, 1f)),  // High     — deeper blue
+            ( 850f, new Color(0.10f, 0.05f, 0.22f, 1f)),  // Space    — near-black purple
+            (1200f, new Color(0.04f, 0.02f, 0.10f, 1f)),  // Deep Space — almost black
+        };
+
         // ── Internal ──────────────────────────────────────────────────────────────
         private Transform[] _lines;
         private Transform[] _dots;
@@ -37,8 +48,9 @@ namespace DoodleClimb.Game
         private float[]     _dotX;        // fixed world X per dot
         private float[]     _dotParallax; // per-dot 0..1 parallax factor
 
-        private Camera  _cam;
-        private Sprite  _whiteSprite;
+        private Camera          _cam;
+        private Sprite          _whiteSprite;
+        private SpriteRenderer  _skySR;       // reference to sky quad renderer
 
         // ── Unity lifecycle ───────────────────────────────────────────────────────
         private void Awake()
@@ -56,6 +68,10 @@ namespace DoodleClimb.Game
         {
             if (_cam == null) return;
             float camY  = _cam.transform.position.y;
+
+            // ── Zone-based sky colour ─────────────────────────────────────────────
+            if (_skySR != null)
+                _skySR.color = SampleSkyColor(camY);
 
             // ── Snap horizontal lines to always fill screen ───────────────────────
             float baseY = Mathf.Floor(camY / lineSpacing) * lineSpacing;
@@ -81,16 +97,16 @@ namespace DoodleClimb.Game
         // ── Construction helpers ──────────────────────────────────────────────────
         private void CreateSkyBackdrop()
         {
-            // Large quad behind everything, very light cream colour — acts as paper
+            // Large quad behind everything — colour transitions per zone in LateUpdate
             var go   = new GameObject("BG_Sky");
             go.transform.SetParent(transform, false);
             go.transform.localScale = new Vector3(200f, 2000f, 1f);
             go.transform.position   = new Vector3(0f, 0f, 5f);
 
-            var sr        = go.AddComponent<SpriteRenderer>();
-            sr.sprite     = _whiteSprite;
-            sr.color      = new Color(0.97f, 0.96f, 0.91f, 1f); // warm cream
-            sr.sortingOrder = -30;
+            _skySR            = go.AddComponent<SpriteRenderer>();
+            _skySR.sprite     = _whiteSprite;
+            _skySR.color      = SkyZones[0].col; // start at ground colour
+            _skySR.sortingOrder = -30;
         }
 
         private void CreateLines()
@@ -162,6 +178,29 @@ namespace DoodleClimb.Game
 
                 _dots[i] = go.transform;
             }
+        }
+
+        // ── Zone sky colour helper ────────────────────────────────────────────────
+        /// <summary>
+        /// Samples the sky colour for a given camera Y world position by linearly
+        /// interpolating between adjacent SkyZone entries.
+        /// </summary>
+        private static Color SampleSkyColor(float camY)
+        {
+            // clamp to first zone below ground
+            if (camY <= SkyZones[0].h) return SkyZones[0].col;
+
+            for (int i = 1; i < SkyZones.Length; i++)
+            {
+                if (camY <= SkyZones[i].h)
+                {
+                    float t = Mathf.InverseLerp(SkyZones[i - 1].h, SkyZones[i].h, camY);
+                    return Color.Lerp(SkyZones[i - 1].col, SkyZones[i].col, t);
+                }
+            }
+
+            // Above the last zone
+            return SkyZones[SkyZones.Length - 1].col;
         }
 
         // ── Sprite factory ────────────────────────────────────────────────────────

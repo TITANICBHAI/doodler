@@ -283,7 +283,16 @@ namespace DoodleClimb.Player
             }
         }
 
-        // ── Death / Revive ────────────────────────────────────────────────────────
+        // ── Damage / Death / Revive ───────────────────────────────────────────────
+        /// <summary>
+        /// Called by enemy contact. Applies one hit of damage — kills the player
+        /// instantly in the base ruleset (no shield/health system yet).
+        /// </summary>
+        public void TakeDamage()
+        {
+            Die();
+        }
+
         public void Die()
         {
             if (!_isAlive) return;

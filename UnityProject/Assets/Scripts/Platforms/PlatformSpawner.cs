@@ -27,6 +27,24 @@ namespace DoodleClimb.Platforms
         [Header("Prefab")]
         public GameObject platformPrefab;
 
+        [Header("Pickup Prefabs (optional)")]
+        [Tooltip("Gem pickup prefab — spawned near platforms above gemStartHeight.")]
+        public GameObject gemPrefab;
+        [Tooltip("Wormhole portal prefab — spawned above wormholeStartHeight.")]
+        public GameObject wormholePrefab;
+
+        [Header("Pickup Settings")]
+        public float gemStartHeight      = 80f;
+        [Tooltip("Chance per platform spawn to also spawn a gem (0–1).")]
+        public float gemChance           = 0.06f;
+        public float wormholeStartHeight = 200f;
+        [Tooltip("Chance per platform spawn to also spawn a wormhole (0–1).")]
+        public float wormholeChance      = 0.025f;
+        [Tooltip("Horizontal offset range for pickup placement relative to platform centre.")]
+        public float pickupOffsetX       = 0.8f;
+        [Tooltip("Vertical offset above platform surface for pickup spawns.")]
+        public float pickupOffsetY       = 0.6f;
+
         [Header("Spawn Settings")]
         [Tooltip("Initial pool size — expands automatically if needed.")]
         public int platformPoolSize = 24;
@@ -215,6 +233,48 @@ namespace DoodleClimb.Platforms
             float x     = (float)(_rng.NextDouble() * 2.0 - 1.0) * maxX;
 
             SpawnPlatformAt(x, _nextSpawnY, type, width);
+            TrySpawnPickup(x, _nextSpawnY, currentHeight);
+        }
+
+        // ── Pickup spawning ───────────────────────────────────────────────────────
+        private void TrySpawnPickup(float platformX, float platformY, float height)
+        {
+            // Wormhole takes priority — only one allowed per spawn event
+            if (wormholePrefab != null
+                && height >= wormholeStartHeight
+                && _rng.NextDouble() < wormholeChance)
+            {
+                float ox = (float)(_rng.NextDouble() * 2.0 - 1.0) * pickupOffsetX;
+                GameObject go = Instantiate(
+                    wormholePrefab,
+                    new Vector3(platformX + ox, platformY + pickupOffsetY, 0f),
+                    Quaternion.identity);
+
+                // Wire score callback
+                var portal = go.GetComponent<Game.WormholePortal>();
+                if (portal != null)
+                    portal.OnEntered += (dist, bonus) =>
+                        Game.GameManager.Instance?.NotifyGemCollected(bonus);
+
+                return; // don't also spawn a gem on the same platform
+            }
+
+            if (gemPrefab != null
+                && height >= gemStartHeight
+                && _rng.NextDouble() < gemChance)
+            {
+                float ox = (float)(_rng.NextDouble() * 2.0 - 1.0) * pickupOffsetX;
+                GameObject go = Instantiate(
+                    gemPrefab,
+                    new Vector3(platformX + ox, platformY + pickupOffsetY, 0f),
+                    Quaternion.identity);
+
+                // Wire score callback
+                var gem = go.GetComponent<Game.GemPickup>();
+                if (gem != null)
+                    gem.OnCollected += pts =>
+                        Game.GameManager.Instance?.NotifyGemCollected(pts);
+            }
         }
 
         private void SpawnPlatformAt(

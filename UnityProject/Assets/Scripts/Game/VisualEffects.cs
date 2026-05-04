@@ -94,6 +94,15 @@ namespace DoodleClimb.Game
             _springBurst.Emit(_springBurst.main.maxParticles);
         }
 
+        /// <summary>Yellow-green burst when landing on a Spring platform.</summary>
+        public void PlaySpringBounce(Vector3 pos)
+        {
+            if (_springBurst == null) return;
+            _springBurst.transform.position = pos;
+            SetColor(_springBurst, new Color(0.8f, 1f, 0.1f), Color.white);
+            _springBurst.Emit(_springBurst.main.maxParticles);
+        }
+
         /// <summary>Big colourful explosion on character death.</summary>
         public void PlayDeathBurst(Vector3 pos, Color charColor)
         {
@@ -110,6 +119,16 @@ namespace DoodleClimb.Game
             _comboFlash.transform.position = pos;
             SetColor(_comboFlash, color, Color.white);
             _comboFlash.Emit(_comboFlash.main.maxParticles);
+        }
+
+        /// <summary>Gold coin-burst when landing on a Golden platform.</summary>
+        public void PlayGoldBurst(Vector3 pos)
+        {
+            // Reuse deathBurst with a warm gold tint — cheap and looks great
+            if (_deathBurst == null) return;
+            _deathBurst.transform.position = pos;
+            SetColor(_deathBurst, new Color(1f, 0.85f, 0.10f), new Color(1f, 1f, 0.60f));
+            _deathBurst.Emit(Mathf.Min(12, _deathBurst.main.maxParticles));
         }
 
         // ── Factory helpers ───────────────────────────────────────────────────────

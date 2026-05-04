@@ -24,6 +24,7 @@ namespace DoodleClimb.Game
 
         [Header("Systems")]
         public Platforms.PlatformSpawner platformSpawner;
+        public EnemySpawner              enemySpawner;
         public CameraFollow              cameraFollow;
         public UI.UIManager              uiManager;
 
@@ -85,10 +86,11 @@ namespace DoodleClimb.Game
             UpdateScores();
             CheckDeathZone();
 
-            if (platformSpawner != null && cameraFollow != null)
+            if (cameraFollow != null)
             {
                 float maxHeight = Mathf.Max(_playerMaxY, _aiMaxY);
-                platformSpawner.UpdateSpawner(cameraFollow.TopY, maxHeight);
+                platformSpawner?.UpdateSpawner(cameraFollow.TopY, maxHeight);
+                enemySpawner?.UpdateSpawner(cameraFollow.TopY, maxHeight);
             }
 
             float challengeTarget = _trainer != null
@@ -335,6 +337,7 @@ namespace DoodleClimb.Game
         }
 
         // ── Stat notification callbacks ───────────────────────────────────────────
+        public void AddScore(int pts)          { _playerScore += pts; }
         public void NotifyCoinCollected()     { _coinsCollected++; }
         public void NotifyGemCollected(int pts){ _gemsCollected++; _playerScore += pts; }
         public void NotifyBossKilled(int pts) { _bossKills++; _enemiesDefeated++; _playerScore += pts; }

@@ -286,6 +286,10 @@ namespace DoodleClimb.Platforms
                         ai.ApplyConveyorPush(conveyorDir * conveyorPushSpeed, conveyorPushDuration);
                     break;
 
+                case PlatformType.Spring:
+                    Game.VisualEffects.Instance?.PlaySpringBounce(transform.position);
+                    break;
+
                 case PlatformType.Golden:
                     Game.GameManager.Instance?.AddScore(goldenScoreBonus);
                     Game.VisualEffects.Instance?.PlayGoldBurst(transform.position);
