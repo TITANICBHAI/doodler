@@ -58,12 +58,18 @@ const ACHIEVEMENTS:Achievement[]=[
   {id:"coin_20",    icon:"🪙", title:"Coin Collector", desc:"Collect 20 coins"},
   {id:"stomp_10",   icon:"💀", title:"Stomper",        desc:"Stomp 10 enemies"},
   {id:"bomb_rider", icon:"💣", title:"Bomb Rider",     desc:"Land on a bomb platform"},
+  {id:"lucky_duck", icon:"😅", title:"Lucky Duck",     desc:"5 near misses in one run"},
+  {id:"speed_racer",icon:"⚡", title:"Speed Racer",    desc:"Grab the speed boost"},
+  {id:"air_king",   icon:"✈",  title:"Air King",       desc:"Air chain ×5 stomps in one chain"},
 ];
 function getAllTimeAch():string[]{try{return JSON.parse((globalThis as any).localStorage?.getItem?.("dc_ach")||"[]")||[];}catch{return[];}}
 function saveAch(ids:string[]):void{try{(globalThis as any).localStorage?.setItem?.("dc_ach",JSON.stringify(ids));}catch{}}
+// Module-level achievement cache — only reads localStorage once per session
+let _achCache:Set<string>|null=null;
+function getAchCache():Set<string>{if(!_achCache)_achCache=new Set(getAllTimeAch());return _achCache;}
 function unlockAch(id:string,runNew:string[]):boolean{
-  const all=getAllTimeAch();if(all.includes(id))return false;
-  all.push(id);saveAch(all);runNew.push(id);return true;
+  const cache=getAchCache();if(cache.has(id))return false;
+  cache.add(id);saveAch([...cache]);runNew.push(id);return true;
 }
 
 // ─── Colour helpers ───────────────────────────────────────────────────────────
@@ -111,10 +117,10 @@ const PCOL:Record<PType,string>={static:"#2DC968",moving:"#4EAAF5",spring:"#F5D1
 const PBORD:Record<PType,string>={static:"#1AA850",moving:"#2D88D8",spring:"#D4A800",breakable:"#C83018",crumble:"#CC4A10",golden:"#BF9B00",rocket:"#CC2010",ice:"#60C8E8",bomb:"#AA1100"};
 const P_GREEN="#27C063"; const P_DARK="#1E9E50";
 
-type PUType="jetpack"|"shield"|"magnet"|"boots"|"heart"|"star";
-const PU_ICON:Record<PUType,string>={jetpack:"🚀",shield:"🛡️",magnet:"🧲",boots:"🥾",heart:"❤️",star:"⭐"};
-const PU_COL:Record<PUType,string>={jetpack:"#FF8C00",shield:"#00A0FF",magnet:"#C050FF",boots:"#FFB020",heart:"#FF4455",star:"#FFD700"};
-const PU_GLW:Record<PUType,string>={jetpack:"rgba(255,140,0,0.28)",shield:"rgba(0,160,255,0.28)",magnet:"rgba(192,80,255,0.28)",boots:"rgba(255,176,32,0.28)",heart:"rgba(255,68,85,0.32)",star:"rgba(255,215,0,0.40)"};
+type PUType="jetpack"|"shield"|"magnet"|"boots"|"heart"|"star"|"speed";
+const PU_ICON:Record<PUType,string>={jetpack:"🚀",shield:"🛡️",magnet:"🧲",boots:"🥾",heart:"❤️",star:"⭐",speed:"⚡"};
+const PU_COL:Record<PUType,string>={jetpack:"#FF8C00",shield:"#00A0FF",magnet:"#C050FF",boots:"#FFB020",heart:"#FF4455",star:"#FFD700",speed:"#00E8FF"};
+const PU_GLW:Record<PUType,string>={jetpack:"rgba(255,140,0,0.28)",shield:"rgba(0,160,255,0.28)",magnet:"rgba(192,80,255,0.28)",boots:"rgba(255,176,32,0.28)",heart:"rgba(255,68,85,0.32)",star:"rgba(255,215,0,0.40)",speed:"rgba(0,232,255,0.35)"};
 
 // ─── City silhouette (pre-computed) ──────────────────────────────────────────
 const CITY_BLDGS = Array.from({length:20},(_,i)=>({
@@ -140,7 +146,7 @@ interface WarpStar {id:number;x:number;y:number;vy:number;r:number;}
 interface TextPop  {id:number;x:number;y:number;vy:number;life:number;text:string;color:string;}
 interface WeatherP {id:number;x:number;y:number;vy:number;vx:number;}
 interface Gem      {id:number;x:number;y:number;collected:boolean;popT:number;}
-interface Boss     {id:number;x:number;y:number;vx:number;vy:number;hp:number;maxHp:number;ang:number;t:number;dead:boolean;deathT:number;hitT:number;}
+interface Boss     {id:number;x:number;y:number;vx:number;vy:number;hp:number;maxHp:number;ang:number;t:number;dead:boolean;deathT:number;hitT:number;enraged:boolean;}
 interface Wormhole {id:number;x:number;y:number;r:number;t:number;used:boolean;}
 
 interface GS {
@@ -149,8 +155,8 @@ interface GS {
   score:number;best:number;bestCombo:number;displayScore:number;
   combo:number;comboT:number;maxCombo:number;coinsCollected:number;enemiesDefeated:number;
   coinStreak:number;coinStreakT:number;
-  lives:number;jetpackT:number;magnetT:number;bootsT:number;rocketFlashT:number;starT:number;shielded:boolean;
-  canDJump:boolean;invincT:number;djumpFlashT:number;stompFlashT:number;
+  lives:number;jetpackT:number;magnetT:number;bootsT:number;rocketFlashT:number;starT:number;speedT:number;shielded:boolean;
+  canDJump:boolean;invincT:number;djumpFlashT:number;stompFlashT:number;airStomps:number;
   milestoneText:string;milestoneT:number;lastMilestone:number;
   lastZoneIdx:number;zoneFlashT:number;zoneFlashCol:string;
   windF:number;windT:number;windNextT:number;
@@ -158,7 +164,7 @@ interface GS {
   plats:Plat[];parts:Particle[];trail:TrailPt[];clouds:Cloud[];
   coins:Coin[];powerUps:PU[];planets:Planet[];shootStars:SShoot[];enemies:Enemy[];
   warpStars:WarpStar[];textPops:TextPop[];weatherParts:WeatherP[];gems:Gem[];bosses:Boss[];wormholes:Wormhole[];
-  gemsCollected:number;nearMissCooldown:number;bossKills:number;
+  gemsCollected:number;nearMissCooldown:number;nearMissCount:number;bossKills:number;
   iceHits:number;wormholeUsed:boolean;bombRidden:boolean;achNewRun:string[];achPopT:number;achPopText:string;
   phase:Phase;input:number;
   shakeX:number;shakeY:number;shakeT:number;
@@ -208,7 +214,7 @@ function mkEnemy(gs:GS,y:number,score:number):Enemy{
 }
 
 function mkBoss(gs:GS,y:number):Boss{
-  return{id:gs.pid++,x:20+Math.random()*(SW-110),y,vx:(Math.random()<0.5?1:-1)*88,vy:0,hp:3,maxHp:3,ang:0,t:0,dead:false,deathT:0,hitT:0};
+  return{id:gs.pid++,x:20+Math.random()*(SW-110),y,vx:(Math.random()<0.5?1:-1)*88,vy:0,hp:3,maxHp:3,ang:0,t:0,dead:false,deathT:0,hitT:0,enraged:false};
 }
 function mkWormhole(gs:GS,y:number):Wormhole{
   return{id:gs.pid++,x:44+Math.random()*(SW-88),y,r:32,t:0,used:false};
@@ -228,7 +234,7 @@ function spawnCluster(gs:GS,cx:number,y:number){
 
 const MILESTONES=[100,250,500,750,1000,1500,2000,3000];
 const COMBO_TIERS=[5,10,15,20,30];
-const PU_TYPES:PUType[]=["jetpack","shield","magnet","boots","star"]; // heart spawns separately; star is rarest
+const PU_TYPES:PUType[]=["jetpack","shield","magnet","boots","star","speed"]; // heart spawns separately; star/speed are rarer
 
 function mkGS(best:number):GS{
   const startY=SH*0.70;
@@ -237,15 +243,15 @@ function mkGS(best:number):GS{
     scrollY:0,minY:startY,startY,score:0,best,bestCombo:getBestCombo(),displayScore:0,
     combo:0,comboT:0,maxCombo:0,coinsCollected:0,enemiesDefeated:0,
     coinStreak:0,coinStreakT:0,
-    lives:3,jetpackT:0,magnetT:0,bootsT:0,rocketFlashT:0,starT:0,shielded:false,
-    canDJump:true,invincT:0,djumpFlashT:0,stompFlashT:0,
+    lives:3,jetpackT:0,magnetT:0,bootsT:0,rocketFlashT:0,starT:0,speedT:0,shielded:false,
+    canDJump:true,invincT:0,djumpFlashT:0,stompFlashT:0,airStomps:0,
     milestoneText:"",milestoneT:0,lastMilestone:0,
     lastZoneIdx:-1,zoneFlashT:0,zoneFlashCol:"",
     windF:0,windT:0,windNextT:12,
     ssTimer:9,
     plats:[],parts:[],trail:[],clouds:[],coins:[],powerUps:[],planets:[],shootStars:[],enemies:[],
     warpStars:[],textPops:[],weatherParts:[],gems:[],bosses:[],wormholes:[],
-    gemsCollected:0,nearMissCooldown:0,bossKills:0,
+    gemsCollected:0,nearMissCooldown:0,nearMissCount:0,bossKills:0,
     iceHits:0,wormholeUsed:false,bombRidden:false,achNewRun:[],achPopT:0,achPopText:"",
     phase:"menu",input:0,shakeX:0,shakeY:0,shakeT:0,pid:0,
   };
@@ -286,8 +292,12 @@ function update(gs:GS,dt:number,now:number){
     }
   } else { gs.windF=0;gs.windT=0; }
 
+  // Power-up timers
+  if(gs.speedT>0){gs.speedT=Math.max(0,gs.speedT-dt);if(Math.random()<0.4)emit(gs,gs.px+PW/2,gs.py+PH,"#00E8FF",1);}
+
   // Player horizontal (wind push when active, not on jetpack)
-  gs.pvx=gs.input*PLAYER_SPD+(gs.windT>0&&gs.jetpackT<=0?gs.windF*0.38:0);
+  const curSpd=PLAYER_SPD*(gs.speedT>0?1.65:1);
+  gs.pvx=gs.input*curSpd+(gs.windT>0&&gs.jetpackT<=0?gs.windF*0.38:0);
   if(gs.input!==0) gs.facing=gs.input;
 
   // Vertical
@@ -319,7 +329,7 @@ function update(gs:GS,dt:number,now:number){
       if(p.broken) continue;
       const feet=gs.py+PH;
       if(feet>=p.y&&feet<=p.y+PLH+14&&gs.px+PW>p.x+4&&gs.px<p.x+p.w-4){
-        gs.py=p.y-PH;
+        gs.py=p.y-PH;gs.airStomps=0; // reset air-stomp chain on platform landing
         // Jump velocity based on platform type
         const isRocket=p.type==="rocket",isSpring=p.type==="spring",isIce=p.type==="ice",bootBoost=gs.bootsT>0&&!isSpring&&!isRocket;
         if(isIce){gs.pvx=gs.pvx*(1.55+Math.random()*0.35)+(Math.random()-0.5)*30;gs.iceHits++;} // slippery slide
@@ -331,14 +341,14 @@ function update(gs:GS,dt:number,now:number){
         gs.canDJump=true;gs.combo++;gs.comboT=2.8;
         if(gs.combo>gs.maxCombo) gs.maxCombo=gs.combo;
         if(gs.combo>gs.bestCombo){gs.bestCombo=gs.combo;saveBestCombo(gs.bestCombo);}
-        for(const ct of COMBO_TIERS){if(gs.combo===ct){emit(gs,gs.px+PW/2,gs.py,comboCol(ct),20);gs.shakeT=0.12;break;}}
+        for(const ct of COMBO_TIERS){if(gs.combo===ct){emit(gs,gs.px+PW/2,gs.py,comboCol(ct),20);gs.shakeT=ct>=20?0.28:ct>=15?0.20:ct>=10?0.16:0.12;break;}}
         emit(gs,p.x+p.w/2,p.y,PCOL[p.type],isRocket?22:isSpring?14:6);
         if(p.type==="breakable") p.broken=true;
         if(p.type==="bomb"){
           p.broken=true;gs.pvy=SPRING_VEL*1.18;gs.psx=0.72;gs.psy=1.52;gs.shakeT=0.32;
           emit(gs,p.x+p.w/2,p.y,"#FF3300",24);emit(gs,p.x+p.w/2,p.y,"#FF9900",14);
           pop(gs,p.x+p.w/2,p.y-30,"💣 BOOM!","#FF6600");
-          if(!gs.bombRidden){gs.bombRidden=true;unlockAch("bomb_rider",gs.achNewRun);}
+          if(!gs.bombRidden){gs.bombRidden=true;if(unlockAch("bomb_rider",gs.achNewRun)){const a=ACHIEVEMENTS.find(x=>x.id==="bomb_rider");if(a){gs.achPopText=`${a.icon} ${a.title}`;gs.achPopT=3.0;}}}
         }
         if(p.type==="crumble"&&p.crumbleT<0) p.crumbleT=0.52;
         if(p.type==="golden"){
@@ -405,13 +415,16 @@ function update(gs:GS,dt:number,now:number){
     boss.t+=dt;boss.ang=(boss.ang+dt*2.2)%(Math.PI*2);
     boss.x+=boss.vx*dt;
     if(boss.x<12||boss.x>SW-100){boss.vx*=-1;}
-    const divePhase=boss.t%5;
-    if(divePhase<1.4){boss.vy+=(220-boss.vy)*dt*3.5;}else{boss.vy+=(0-boss.vy)*dt*3;}
+    const divePeriod=boss.enraged?3.2:5;
+    const divePhase=boss.t%divePeriod;
+    const diveVy=boss.enraged?340:220;
+    if(divePhase<1.2){boss.vy+=(diveVy-boss.vy)*dt*(boss.enraged?5:3.5);}else{boss.vy+=(0-boss.vy)*dt*3;}
     boss.y+=boss.vy*dt;
     const minBossY=gs.scrollY-250;if(boss.y<minBossY)boss.y=minBossY;
     if(gs.pvy>0){
       if(Math.hypot(gs.px+PW/2-(boss.x+40),gs.py+PH-(boss.y+40))<46){
         boss.hp--;boss.hitT=0.45;gs.pvy=SPRING_VEL*0.88;gs.canDJump=true;gs.shakeT=0.25;
+        gs.airStomps++;
         emit(gs,boss.x+40,boss.y+40,"#FF6633",16);
         if(boss.hp<=0){
           boss.dead=true;boss.deathT=1.2;gs.bossKills++;gs.enemiesDefeated++;
@@ -420,13 +433,19 @@ function update(gs:GS,dt:number,now:number){
           gs.shakeT=0.6;pop(gs,boss.x+40,boss.y-28,`👹 BOSS DOWN! +${bonus}`,"#FF8800");
           for(let gi=0;gi<3;gi++) gs.gems.push({id:gs.pid++,x:boss.x+40+(gi-1)*28,y:boss.y+20,collected:false,popT:0});
           for(let ci=0;ci<5;ci++) gs.coins.push({id:gs.pid++,x:boss.x+40+(ci-2)*20,y:boss.y+30,collected:false,popT:0});
-        }else{pop(gs,boss.x+40,boss.y-24,`💥 ${boss.hp} HP LEFT`,"#FF6633");}
+        }else{
+          if(!boss.enraged&&boss.hp===1){
+            boss.enraged=true;boss.vx*=1.85;
+            pop(gs,boss.x+40,boss.y-44,"🔥 ENRAGED!","#FF2200");gs.shakeT=0.4;
+            emit(gs,boss.x+40,boss.y+40,"#FF0000",22);
+          } else {pop(gs,boss.x+40,boss.y-24,`💥 ${boss.hp} HP LEFT`,"#FF6633");}
+        }
       }
     }
     if(!boss.dead&&gs.invincT<=0&&gs.starT<=0){
       if(Math.hypot(gs.px+PW/2-(boss.x+40),gs.py+PH/2-(boss.y+40))<44&&!(gs.pvy>0&&gs.py+PH<boss.y+28)){
-        if(gs.shielded){gs.shielded=false;gs.invincT=2.0;emit(gs,boss.x+40,boss.y+40,"#50A0FF",14);}
-        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.5;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;}
+        if(gs.shielded){gs.shielded=false;gs.invincT=2.0;gs.airStomps=0;emit(gs,boss.x+40,boss.y+40,"#50A0FF",14);}
+        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.5;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;gs.airStomps=0;}
         else{gs.phase="dead";gs.shakeT=0.7;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
       }
     }
@@ -464,6 +483,7 @@ function update(gs:GS,dt:number,now:number){
         for(const e of gs.enemies){if(!e.dead){e.dead=true;emit(gs,e.x+18,e.y,"#FFD700",14);for(let d=0;d<2;d++)gs.coins.push({id:gs.pid++,x:e.x+18+(Math.random()-0.5)*24,y:e.y,collected:false,popT:0});}}
         emit(gs,pu.x,pu.y,"#FFD700",32);pop(gs,pu.x,pu.y-24,"⭐ STAR POWER!","#FFD700");gs.shakeT=0.35;
       }
+      else if(pu.tp==="speed"){gs.speedT=4.0;emit(gs,pu.x,pu.y,"#00E8FF",22);pop(gs,pu.x,pu.y-22,"⚡ SPEED BOOST!","#00E8FF");gs.shakeT=0.18;if(unlockAch("speed_racer",gs.achNewRun)){const a=ACHIEVEMENTS.find(x=>x.id==="speed_racer");if(a){gs.achPopText=`${a.icon} ${a.title}`;gs.achPopT=3.0;}}}
     }
   }
 
@@ -493,16 +513,21 @@ function update(gs:GS,dt:number,now:number){
       if(gs.pvy>0&&feet>=e.y-2&&feet<=e.y+EH*0.42){
         e.dead=true;gs.pvy=JUMP_VEL*0.88;gs.py=e.y-PH;
         gs.psx=1.45;gs.psy=0.60;gs.canDJump=true;
-        gs.combo++;gs.comboT=2.8;gs.stompFlashT=0.65;gs.enemiesDefeated++;gs.score+=15;
+        gs.combo++;gs.comboT=2.8;gs.stompFlashT=0.65;gs.enemiesDefeated++;gs.airStomps++;
+        const airBonus=gs.airStomps>=2?gs.airStomps*20:15;gs.score+=airBonus;
+        if(gs.airStomps>=5&&unlockAch("air_king",gs.achNewRun)){const a=ACHIEVEMENTS.find(x=>x.id==="air_king");if(a){gs.achPopText=`${a.icon} ${a.title}`;gs.achPopT=3.0;}}
+        if(gs.airStomps>=2) pop(gs,e.x,e.y-20,`✈ AIR CHAIN ×${gs.airStomps}!`,"#FF88AA");
         if(gs.combo>gs.maxCombo) gs.maxCombo=gs.combo;
         if(gs.combo>gs.bestCombo){gs.bestCombo=gs.combo;saveBestCombo(gs.bestCombo);}
         for(let d=0;d<2;d++) gs.coins.push({id:gs.pid++,x:e.x+EW/2+(Math.random()-0.5)*32,y:e.y+(Math.random()-0.5)*16,collected:false,popT:0});
-        emit(gs,e.x+EW/2,e.y,"#FF8844",20);pop(gs,e.x+EW/2,e.y-14,"+15 STOMP!","#FF8844");gs.shakeT=0.10;break;
+        emit(gs,e.x+EW/2,e.y,"#FF8844",20);
+        if(gs.airStomps<2) pop(gs,e.x+EW/2,e.y-14,`+${airBonus} STOMP!`,"#FF8844");
+        gs.shakeT=0.10;break;
       }
       if(feet>e.y+EH*0.35&&gs.py<e.y+EH-5){
         e.dead=true;emit(gs,e.x+EW/2,e.y,"#FF5533",14);
-        if(gs.shielded){gs.shielded=false;gs.invincT=1.5;gs.enemiesDefeated++;}
-        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.2;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;}
+        if(gs.shielded){gs.shielded=false;gs.invincT=1.5;gs.airStomps=0;gs.enemiesDefeated++;}
+        else if(gs.lives>1){gs.lives--;gs.pvy=JUMP_VEL*1.1;gs.invincT=2.2;gs.shakeT=0.4;gs.combo=0;gs.comboT=0;gs.airStomps=0;}
         else{gs.phase="dead";gs.shakeT=0.7;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
         break;
       }
@@ -515,7 +540,7 @@ function update(gs:GS,dt:number,now:number){
     for(const e of gs.enemies){
       if(e.dead) continue;
       const d=Math.hypot(gs.px+PW/2-e.x-EW/2,gs.py+PH/2-e.y-EH/2);
-      if(d>24&&d<60){gs.score+=5;pop(gs,gs.px+PW/2,gs.py-26,"😅 CLOSE CALL! +5","#FFCC44");emit(gs,gs.px+PW/2,gs.py+PH/2,"#FFCC44",8);gs.nearMissCooldown=2.2;break;}
+      if(d>24&&d<60){gs.score+=5;gs.nearMissCount++;pop(gs,gs.px+PW/2,gs.py-26,"😅 CLOSE CALL! +5","#FFCC44");emit(gs,gs.px+PW/2,gs.py+PH/2,"#FFCC44",8);gs.nearMissCooldown=2.2;break;}
     }
   }
 
@@ -549,6 +574,7 @@ function update(gs:GS,dt:number,now:number){
     if(gs.wormholeUsed)      tryUnlock("wormhole");
     if(gs.coinsCollected>=20)tryUnlock("coin_20");
     if(gs.enemiesDefeated>=10)tryUnlock("stomp_10");
+    if(gs.nearMissCount>=5)  tryUnlock("lucky_duck");
   })();
   if(gs.achPopT>0) gs.achPopT-=dt;
 
@@ -563,7 +589,9 @@ function update(gs:GS,dt:number,now:number){
   const topGenY=gs.scrollY-SH*0.55;
   let topY=gs.plats.length?Math.min(...gs.plats.map(p=>p.y)):gs.startY;let safety=0;
   while(topY>topGenY&&safety++<25){
-    const gap=Math.min(MAX_GAP,68+Math.random()*40); // capped — always jumpable
+    // Gap grows slightly with score (harder), but never exceeds MAX_GAP for fairness
+    const baseGap=Math.min(92,68+gs.score*0.022);
+    const gap=Math.min(MAX_GAP,baseGap+Math.random()*28);
     topY-=gap;
     const plat=mkPlat(gs,topY,gs.score);
     gs.plats.push(plat);
@@ -572,20 +600,33 @@ function update(gs:GS,dt:number,now:number){
       if(Math.random()<0.42) spawnCluster(gs,plat.x+plat.w/2,topY);
       else gs.coins.push({id:gs.pid++,x:plat.x+Math.random()*plat.w,y:topY-30,collected:false,popT:0});
     }
-    // Gem: rarer than coins, only above 280m
-    if(gs.score>280&&Math.random()<0.060)
+    // Gem: rarer than coins, only above 280m; more common at high altitude
+    const gemChance=gs.score>800?0.10:gs.score>500?0.078:gs.score>280?0.055:0;
+    if(gemChance>0&&Math.random()<gemChance)
       gs.gems.push({id:gs.pid++,x:plat.x+Math.random()*plat.w,y:topY-36,collected:false,popT:0});
     // Heart: very rare, only when hurt
     if(gs.score>120&&gs.lives<=2&&Math.random()<0.032&&!gs.powerUps.some(p=>!p.col&&p.tp==="heart"))
       gs.powerUps.push(mkPU(gs,topY-45,"heart"));
-    else if(gs.score>20&&Math.random()<0.08&&!gs.powerUps.some(p=>!p.col&&Math.abs(p.y-topY)<300))
-      gs.powerUps.push(mkPU(gs,topY-45,PU_TYPES[Math.floor(Math.random()*PU_TYPES.length)]));
-    if(gs.score>80&&Math.random()<0.10&&!gs.enemies.some(e=>!e.dead&&Math.abs(e.y-topY)<200))
+    else if(gs.score>20&&Math.random()<0.08&&!gs.powerUps.some(p=>!p.col&&Math.abs(p.y-topY)<300)){
+      // Weighted spawn: star & speed are 2× rarer than the rest
+      const pool:PUType[]=["jetpack","shield","magnet","boots","speed","star","jetpack","shield","magnet","boots"];
+      gs.powerUps.push(mkPU(gs,topY-45,pool[Math.floor(Math.random()*pool.length)]));
+    }
+    if(gs.score>80&&Math.random()<0.10&&!gs.enemies.some(e=>!e.dead&&Math.abs(e.y-topY)<200)){
       gs.enemies.push(mkEnemy(gs,topY,gs.score));
+      // Double Trouble: at score 600+, occasionally spawn a second enemy nearby
+      if(gs.score>600&&Math.random()<0.35){
+        gs.enemies.push(mkEnemy(gs,topY+Math.random()*90,gs.score));
+        pop(gs,SW/2-60,gs.scrollY+SH*0.35,"👿 DOUBLE TROUBLE!","#FF4488");
+      }
+    }
     if(gs.score>600&&Math.random()<0.12&&!gs.planets.some(p=>Math.abs(p.y-topY)<SH*0.6))
       gs.planets.push(mkPlanet(gs,topY+Math.random()*SH*0.5));
-    if(gs.score>480&&Math.random()<0.035&&!gs.bosses.some(b=>!b.dead))
+    if(gs.score>480&&Math.random()<0.035&&!gs.bosses.some(b=>!b.dead)){
       gs.bosses.push(mkBoss(gs,topY-90));
+      pop(gs,SW/2-40,gs.scrollY+SH*0.25,"👹 BOSS INCOMING!","#FF3300");
+      emit(gs,SW/2,gs.scrollY+SH*0.3,"#FF3300",18);gs.shakeT=0.5;
+    }
     if(gs.score>850&&Math.random()<0.022&&!gs.wormholes.some(w=>!w.used&&Math.abs(w.y-topY)<SH*1.5))
       gs.wormholes.push(mkWormhole(gs,topY-110));
   }
@@ -659,8 +700,8 @@ function update(gs:GS,dt:number,now:number){
 
   // Death
   if(gs.py>gs.scrollY+SH+DEATH_OFF&&gs.invincT<=0){
-    if(gs.shielded){gs.shielded=false;gs.pvy=SPRING_VEL*1.1;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.2;gs.shakeT=0.3;emit(gs,gs.px+PW/2,gs.py,"#50A0FF",20);}
-    else if(gs.lives>1){gs.lives--;gs.pvy=SPRING_VEL;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.5;gs.shakeT=0.45;gs.canDJump=true;gs.combo=0;gs.comboT=0;emit(gs,gs.px+PW/2,gs.py,"#FF4422",16);}
+    if(gs.shielded){gs.shielded=false;gs.pvy=SPRING_VEL*1.1;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.2;gs.shakeT=0.3;gs.airStomps=0;emit(gs,gs.px+PW/2,gs.py,"#50A0FF",20);}
+    else if(gs.lives>1){gs.lives--;gs.pvy=SPRING_VEL;gs.py=gs.scrollY+SH*0.55;gs.invincT=2.5;gs.shakeT=0.45;gs.canDJump=true;gs.combo=0;gs.comboT=0;gs.airStomps=0;emit(gs,gs.px+PW/2,gs.py,"#FF4422",16);}
     else{gs.phase="dead";gs.shakeT=0.65;emit(gs,gs.px+PW/2,gs.py,P_GREEN,24);}
   }
 }
@@ -851,8 +892,9 @@ function BossView({boss}:{boss:Boss}){
       {!boss.dead&&<View style={{width:80,height:7,backgroundColor:"rgba(0,0,0,0.45)",borderRadius:4,marginBottom:5}}>
         <View style={{width:80*hpPct,height:7,backgroundColor:hpCol,borderRadius:4}}/>
       </View>}
-      <View style={{width:80,height:80,borderRadius:40,backgroundColor:flash?"#FF6633":"#7B0000",borderWidth:3.5,borderColor:flash?"#FFAA44":"#FF2200",alignItems:"center",justifyContent:"center",transform:[{scale:sc}]}}>
-        <Text style={{fontSize:36,lineHeight:40}}>👹</Text>
+      <View style={{width:80,height:80,borderRadius:40,backgroundColor:flash?"#FF6633":boss.enraged?"#AA0000":"#7B0000",borderWidth:boss.enraged?5:3.5,borderColor:flash?"#FFAA44":boss.enraged?"#FF6600":"#FF2200",alignItems:"center",justifyContent:"center",transform:[{scale:sc*(boss.enraged?1.08:1)}]}}>
+        {boss.enraged&&!flash&&<View style={{position:"absolute",width:90,height:90,borderRadius:45,borderWidth:2,borderColor:"rgba(255,60,0,0.45)",pointerEvents:"none"} as any}/>}
+        <Text style={{fontSize:36,lineHeight:40}}>{boss.enraged?"😡":"👹"}</Text>
       </View>
     </View>
   );
@@ -904,6 +946,7 @@ function PlayerView({gs,plrBg,plrBrd,combo,comboT}:{gs:GS;plrBg:string;plrBrd:st
       {gs.shielded&&<View style={g.shield}/>}
       {gs.magnetT>0&&<View style={g.magnetAura}/>}
       {gs.bootsT>0&&<View style={g.bootsGlow}/>}
+      {gs.speedT>0&&<View style={g.speedAura}/>}
       {gs.rocketFlashT>0&&<View style={g.rocketGlow}/>}
     </View>
   );
@@ -1134,7 +1177,7 @@ export default function GameScreen(){
 
         {/* HUD */}
         <View style={[s.hud,{paddingTop:topPad}]}>
-          <Text style={[s.scoreNum,{color:zc.txt}]}>{Math.round(r.displayScore)}</Text>
+          <Text style={[s.scoreNum,{color:r.best>0&&r.score>=r.best?hslToRgb((now/12)%360,100,62):zc.txt}]}>{Math.round(r.displayScore)}</Text>
           <Text style={[s.mLabel,{color:zc.txt}]}>m</Text>
           {mult>1&&r.comboT>0&&<Text style={[s.multTxt,{color:comboCol(r.combo)}]}>×{mult.toFixed(1)}</Text>}
           {r.best>0&&<Text style={[s.bestLabel,{color:zc.txt}]}>BEST  {r.best} m</Text>}
@@ -1143,6 +1186,7 @@ export default function GameScreen(){
         {phase==="play"&&r.coinsCollected>0&&(
           <View style={[s.coinHud,{top:topPad+46}]}>
             <Text style={[s.coinHudTxt,{color:zc.txt}]}>🪙 {r.coinsCollected}{r.gemsCollected>0?`  💎 ${r.gemsCollected}`:""}</Text>
+            {r.coinStreak>=3&&r.coinStreakT>0&&<Text style={[s.coinHudTxt,{color:"#FFD700",fontSize:11,marginTop:1}]}>🔥 ×{r.coinStreak} STREAK</Text>}
           </View>
         )}
         {phase==="play"&&r.windT>0&&(
@@ -1157,6 +1201,7 @@ export default function GameScreen(){
           <TimerBar t={r.jetpackT}      max={4}   col="#FF8C00" icon="🚀"/>
           <TimerBar t={r.magnetT}       max={6}   col="#C050FF" icon="🧲"/>
           <TimerBar t={r.bootsT}        max={5}   col="#FFB020" icon="🥾"/>
+          <TimerBar t={r.speedT}        max={4}   col="#00E8FF" icon="⚡"/>
           <TimerBar t={r.rocketFlashT}  max={0.8} col="#FF4420" icon="🔥"/>
           <TimerBar t={r.starT}         max={3.5} col="#FFD700" icon="⭐"/>
         </View>
@@ -1194,7 +1239,7 @@ export default function GameScreen(){
         {phase==="play"&&r.score===0&&(
           <View style={s.hintWrap}>
             <Text style={[s.hintTxt,{color:zc.txt}]}>← left  ·  right →  ·  tap mid-air = double jump</Text>
-            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>💣 bomb · 🦇 bat · 👹 boss (3-hit!) · 🌀 wormhole · 💎 gems</Text>
+            <Text style={[s.hintTxt,{color:zc.txt,marginTop:3}]}>💣 bomb · 🦇 bat · ⚡ speed · air chain stomps · 👹 boss (enrages at 1HP!)</Text>
           </View>
         )}
 
@@ -1209,7 +1254,7 @@ export default function GameScreen(){
             )}
             <View style={s.btn}><Text style={s.btnTxt}>TAP TO PLAY</Text></View>
             <Text style={s.ovHint}>🚀 jetpack · 🛡️ shield · 🧲 magnet · 🥾 boots · ❤️ life · ⭐ star</Text>
-            <Text style={s.ovHint}>✦ golden · 🚀 rocket · 🧊 ice · 💣 bomb · 👹 boss · 🌀 wormhole · 🦇 bat</Text>
+            <Text style={s.ovHint}>✦ golden · 🚀 rocket · 🧊 ice · 💣 bomb · ⚡ speed · 👹 boss (enrages!) · 🦇 bat</Text>
           </Pressable>
         )}
 
@@ -1219,7 +1264,7 @@ export default function GameScreen(){
             <Text style={s.goLabel}>SCORE</Text>
             <Text style={s.goScore}>{r.score}</Text>
             <Text style={s.goM}>m</Text>
-            {r.score>=r.best&&r.score>0&&<Text style={s.newBest}>✦ NEW BEST ✦</Text>}
+            {r.best>0&&r.score>=r.best&&<Text style={s.newBest}>✦ NEW BEST ✦</Text>}
             {(()=>{const m=getMedal(r.score);return m?<Text style={[s.newBest,{color:m.col,fontSize:28,letterSpacing:4}]}>{m.icon} {m.label}</Text>:null;})()}
             <View style={s.statsRow}>
               <StatPill icon="🪙" val={r.coinsCollected} label="COINS"/>
@@ -1227,7 +1272,13 @@ export default function GameScreen(){
               <StatPill icon="⚡" val={r.maxCombo} label="COMBO"/>
               <StatPill icon="💀" val={r.enemiesDefeated} label="STOMPED"/>
             </View>
-            {r.bossKills>0&&<Text style={[s.goLabel,{fontSize:13,letterSpacing:3,marginTop:2}]}>👹 BOSS KILLS: {r.bossKills}</Text>}
+            <View style={[s.statsRow,{marginTop:6}]}>
+              {r.bossKills>0&&<StatPill icon="👹" val={r.bossKills} label="BOSSES"/>}
+              {r.nearMissCount>0&&<StatPill icon="😅" val={r.nearMissCount} label="CLOSE!"/>}
+              {r.wormholeUsed&&<StatPill icon="🌀" val={1} label="WORMHOLE"/>}
+              {r.bombRidden&&<StatPill icon="💣" val={1} label="BOMB"/>}
+              {r.iceHits>0&&<StatPill icon="🧊" val={r.iceHits} label="ICE"/>}
+            </View>
             {r.bestCombo>0&&<Text style={[s.goLabel,{fontSize:13,letterSpacing:3,marginTop:2}]}>ALL-TIME BEST COMBO  ⚡{r.bestCombo}</Text>}
             {dailyBest>0&&<Text style={[s.goLabel,{fontSize:12,letterSpacing:2,marginTop:1,opacity:0.65}]}>📅 TODAY'S BEST  {dailyBest} m</Text>}
             {r.achNewRun.length>0&&(
@@ -1279,6 +1330,7 @@ const g=StyleSheet.create({
   shield:    {position:"absolute",top:-8,left:-8,right:-8,bottom:-8,borderRadius:36,borderWidth:3,borderColor:"#50AAFF",backgroundColor:"rgba(80,160,255,0.12)"},
   magnetAura:{position:"absolute",top:-12,left:-12,right:-12,bottom:-12,borderRadius:40,borderWidth:2,borderColor:"#C050FF",backgroundColor:"rgba(192,80,255,0.09)",borderStyle:"dashed"},
   bootsGlow: {position:"absolute",left:-4,bottom:-6,right:-4,height:10,borderRadius:5,backgroundColor:"rgba(255,176,32,0.55)"},
+  speedAura: {position:"absolute",top:-8,left:-14,right:-14,bottom:-4,borderRadius:28,borderWidth:2.5,borderColor:"#00E8FF",backgroundColor:"rgba(0,232,255,0.10)"},
   rocketGlow:{position:"absolute",left:-6,bottom:-8,right:-6,height:16,borderRadius:8,backgroundColor:"rgba(255,80,20,0.70)"},
   comboAura: {position:"absolute",top:-14,left:-14,right:-14,bottom:-14,borderRadius:38,borderWidth:3},
 });
