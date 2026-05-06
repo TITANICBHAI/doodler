@@ -1,0 +1,42 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &2000000
+GameObject:
+  m_ObjectHideFlags: 0
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2000001}
+  - component: {fileID: 2000002}
+  - component: {fileID: 2000003}
+  - component: {fileID: 2000004}
+  m_Name: Platform_Static
+  m_TagString: Platform
+  m_IsActive: 1
+--- !u!4 &2000001
+Transform:
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 0.80, y: 0.14, z: 1}
+--- !u!61 &2000002
+BoxCollider2D:
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Offset: {x: 0, y: 0}
+  m_Size: {x: 1, y: 1}
+  m_EdgeRadius: 0
+  m_IsTrigger: 0
+--- !u!212 &2000003
+SpriteRenderer:
+  m_Enabled: 1
+  m_Color: {r: 0.176, g: 0.788, b: 0.408, a: 1}
+  m_SortingLayerName: Default
+  m_SortingOrder: 5
+--- !u!114 &2000004
+MonoBehaviour:
+  m_Script: {fileID: 11500000, guid: platform_guid, type: 3}
+  platformType: 0
+  moveSpeed: 0
+  moveRange: 0
+  breakOnLand: 0
+  crumbleDelay: 0
+  jumpMultiplier: 1

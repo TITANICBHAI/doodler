@@ -737,14 +737,16 @@ function update(gs:GS,dt:number,now:number){
       });
     }
     for(const wp of gs.weatherParts){wp.x+=wp.vx*dt;wp.y+=wp.vy*dt;}
-    gs.weatherParts=gs.weatherParts.filter(wp=>wp.y<SH+12&&wp.x>-24&&wp.x<SW+24).slice(-90);
+    gs.weatherParts=gs.weatherParts.filter(wp=>wp.y<SH+12&&wp.x>-24&&wp.x<SW+24).slice(-55);
   } else { if(gs.weatherParts.length) gs.weatherParts=[]; }
 
   // Particles + text pops
   for(const pt of gs.parts){pt.x+=pt.vx*dt;pt.y+=pt.vy*dt;pt.vy+=560*dt;pt.life-=dt*2.2;}
   gs.parts=gs.parts.filter(p=>p.life>0);
+  if(gs.parts.length>60) gs.parts=gs.parts.slice(-60);
   for(const tp of gs.textPops){tp.y+=tp.vy*dt;tp.vy*=0.92;tp.life-=dt*1.6;}
   gs.textPops=gs.textPops.filter(t=>t.life>0);
+  if(gs.textPops.length>12) gs.textPops=gs.textPops.slice(-12);
 
   // Squash lerps + shake
   const sr=1-Math.exp(-13*dt);
@@ -1107,17 +1109,21 @@ export default function GameScreen(){
   const [leaderboard,setLeaderboard]=useState<number[]>(()=>getLeaderboard());
   const [dailyBest,setDailyBest]=useState(()=>getDailyBest());
 
-  const loop=useCallback((ts:number)=>{
+  const phaseRef=useRef<Phase>("menu");
+  const loopFn=useRef<FrameRequestCallback>(null!);
+  loopFn.current=(ts:number)=>{
     if(prevTs.current===0) prevTs.current=ts;
     const dt=Math.min((ts-prevTs.current)/1000,0.033);
     prevTs.current=ts;nowRef.current=ts;
     update(gs.current,dt,ts);
-    if(gs.current.phase!==phase) setPhase(gs.current.phase);
+    const newPhase=gs.current.phase;
+    if(newPhase!==phaseRef.current){phaseRef.current=newPhase;setPhase(newPhase);}
     setT(t=>t+1);
-    rafRef.current=requestAnimationFrame(loop);
-  },[phase]);
+    rafRef.current=requestAnimationFrame(loopFn.current);
+  };
+  const loop=useCallback(()=>{rafRef.current=requestAnimationFrame(loopFn.current);},[]);
 
-  useEffect(()=>{rafRef.current=requestAnimationFrame(loop);return()=>cancelAnimationFrame(rafRef.current);},[loop]);
+  useEffect(()=>{loop();return()=>cancelAnimationFrame(rafRef.current);},[]);
 
   useEffect(()=>{
     if(phase==="dead"){
@@ -1148,6 +1154,7 @@ export default function GameScreen(){
   const startGame=useCallback(()=>{
     const best=gs.current.best;
     gs.current=mkGS(best);gs.current.phase="play";
+    phaseRef.current="play";
     prevTs.current=0;setPhase("play");
   },[]);
 
