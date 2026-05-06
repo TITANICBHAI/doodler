@@ -1,0 +1,52 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build Android APK (EAS Cloud)
+        run: eas build --platform android --profile preview --non-interactive
+
+      - name: Download APK artifact
+        run: |
+          APK_URL=$(eas build:list --platform android --limit 1 --json --non-interactive | node -e "
+            const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+            console.log(d[0]?.artifacts?.buildUrl ?? '');
+          ")
+          if [ -n "$APK_URL" ]; then
+            curl -L "$APK_URL" -o doodleclimb.apk
+            echo "APK downloaded: doodleclimb.apk"
+          else
+            echo "APK URL not available yet (build may still be processing)"
+          fi
+
+      - name: Upload APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: doodleclimb-apk
+          path: '*.apk'
+          retention-days: 30
+        if: always()
